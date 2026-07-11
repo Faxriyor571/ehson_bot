@@ -65,7 +65,8 @@ async def send_daily_report(bot: Bot) -> None:
     text = await _build_daily_report_text()
 
     async with get_session() as session:
-        users = await SqlAlchemyBotUserRepository(session).list_all()
+        # Not list_all(): a PENDING (not-yet-approved) user gets no reports.
+        users = await SqlAlchemyBotUserRepository(session).list_approved()
 
     await broadcast(bot, [user.telegram_id for user in users], text)
 

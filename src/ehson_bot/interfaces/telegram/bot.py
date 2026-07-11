@@ -13,7 +13,7 @@ from ehson_bot.infrastructure.config import settings
 from ehson_bot.infrastructure.db.repositories import SqlAlchemyBotUserRepository
 from ehson_bot.infrastructure.db.session import get_session
 from ehson_bot.infrastructure.scheduler import build_scheduler
-from ehson_bot.interfaces.telegram.handlers import admin, donations, reports, start
+from ehson_bot.interfaces.telegram.handlers import admin, donations, fallback, reports, start
 from ehson_bot.interfaces.telegram.middlewares import DbSessionMiddleware
 
 logger = logging.getLogger("ehson_bot")
@@ -29,6 +29,8 @@ def build_dispatcher() -> Dispatcher:
     dp.include_router(reports.router)
     dp.include_router(admin.router)
     dp.include_router(donations.router)
+    # Must stay last: catches anything no role-specific router matched.
+    dp.include_router(fallback.router)
     return dp
 
 

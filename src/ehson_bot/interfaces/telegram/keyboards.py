@@ -18,9 +18,13 @@ BTN_RECENT = "📋 Oxirgi yozuvlar"
 
 BTN_MANAGE_TREASURERS = "👥 Xazinachilarni boshqarish"
 BTN_SETTINGS = "⚙️ Sozlamalar"
+BTN_APPROVE_USERS = "✅ Foydalanuvchilarni tasdiqlash"
 
 BTN_ADD_TREASURER = "➕ Xazinachi qo'shish"
 BTN_REMOVE_TREASURER = "➖ Xazinachi o'chirish"
+BTN_APPROVE_BY_ID = "☑️ ID orqali tasdiqlash"
+
+BTN_USAGE_HISTORY = "📜 Foydalanish tarixi"
 
 BTN_PERIOD_TODAY = "📆 Bugun"
 BTN_PERIOD_MONTH = "🗓 Bu oy"
@@ -46,12 +50,14 @@ def main_menu(role: Role) -> ReplyKeyboardMarkup:
 
     rows.append([KeyboardButton(text=BTN_STATS), KeyboardButton(text=BTN_BALANCE)])
     rows.append([KeyboardButton(text=BTN_ACCOUNT), KeyboardButton(text=BTN_HELP)])
+    rows.append([KeyboardButton(text=BTN_USAGE_HISTORY)])
 
     if role in (Role.TREASURER, Role.SUPER_ADMIN):
         rows.append([KeyboardButton(text=BTN_RECENT)])
 
     if role is Role.SUPER_ADMIN:
         rows.append([KeyboardButton(text=BTN_MANAGE_TREASURERS), KeyboardButton(text=BTN_SETTINGS)])
+        rows.append([KeyboardButton(text=BTN_APPROVE_USERS)])
 
     return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
 
@@ -105,5 +111,12 @@ def recent_entries_menu() -> ReplyKeyboardMarkup:
 def settings_menu() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[[KeyboardButton(text=BTN_EDIT_BANK_ACCOUNT)], [KeyboardButton(text=BTN_BACK)]],
+        resize_keyboard=True,
+    )
+
+
+def approve_users_menu() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text=BTN_APPROVE_BY_ID)], [KeyboardButton(text=BTN_BACK)]],
         resize_keyboard=True,
     )

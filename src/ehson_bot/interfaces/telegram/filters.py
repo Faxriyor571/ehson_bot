@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ehson_bot.domain.entities import Role
 from ehson_bot.infrastructure.db.repositories import SqlAlchemyBotUserRepository
 
-_RANK = {Role.USER: 0, Role.TREASURER: 1, Role.SUPER_ADMIN: 2}
+_RANK = {Role.PENDING: 0, Role.USER: 1, Role.TREASURER: 2, Role.SUPER_ADMIN: 3}
 
 
 class HasRole(BaseFilter):
@@ -24,6 +24,11 @@ class HasRole(BaseFilter):
         if user is None:
             return False
         return _RANK[user.role] >= _RANK[self.minimum]
+
+
+class IsUserOrAbove(HasRole):
+    def __init__(self) -> None:
+        super().__init__(Role.USER)
 
 
 class IsTreasurerOrAbove(HasRole):

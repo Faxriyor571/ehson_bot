@@ -21,18 +21,25 @@ from ehson_bot.interfaces.telegram.common import show_main_menu
 from ehson_bot.interfaces.telegram.filters import IsSuperAdmin
 from ehson_bot.interfaces.telegram.keyboards import (
     BTN_ADD_TREASURER,
+    BTN_APPROVE_BY_ID,
+    BTN_APPROVE_USERS,
     BTN_CANCEL,
     BTN_CONFIRM,
     BTN_EDIT_BANK_ACCOUNT,
     BTN_MANAGE_TREASURERS,
     BTN_REMOVE_TREASURER,
     BTN_SETTINGS,
+    approve_users_menu,
     cancel_only,
     confirm_cancel,
     manage_treasurers_menu,
     settings_menu,
 )
-from ehson_bot.interfaces.telegram.states import ManageTreasurerStates, SettingsStates
+from ehson_bot.interfaces.telegram.states import (
+    ApproveUserStates,
+    ManageTreasurerStates,
+    SettingsStates,
+)
 
 router = Router(name="admin")
 router.message.filter(IsSuperAdmin())
@@ -203,4 +210,73 @@ async def confirm_bank_account_text(
     await SqlAlchemyBankAccountRepository(session).set(data["text"])
     await state.clear()
     await message.answer("✅ Hisob raqami yangilandi.")
+    await show_main_menu(message, session)
+
+
+# --------------------------------------------------------------------------
+# Approve pending users: grant baseline (USER) access
+# --------------------------------------------------------------------------
+
+
+@router.message(F.text == BTN_APPROVE_USERS)
+async def open_approve_users(message: Message, session: AsyncSession) -> None:
+    pending = await SqlAlchemyBotUserRepository(session).list_by_role(Role.PENDING)
+    if pending:
+        listing = "\n".join(
+            f"• {u.display_name or 'Noma\'lum'} — ID: {u.telegram_id}" for u in pending
+        )
+    else:
+        listing = "Hozircha tasdiq kutayotgan foydalanuvchilar yo'q."
+    await message.answer(
+        f"<b>Tasdiq kutayotganlar:</b>\n{listing}", reply_markup=approve_users_menu()
+    )
+
+
+@router.message(F.text == BTN_APPROVE_BY_ID)
+async def ask_id_to_approve(message: Message, state: FSMContext) -> None:
+    await state.set_state(ApproveUserStates.awaiting_id)
+    await message.answer(
+        "Tasdiqlanadigan foydalanuvchining Telegram ID raqamini yuboring.",
+        reply_markup=cancel_only(),
+    )
+
+
+@router.message(ApproveUserStates.awaiting_id, F.text == BTN_CANCEL)
+@router.message(ApproveUserStates.confirming, F.text == BTN_CANCEL)
+async def cancel_approve_user(message: Message, state: FSMContext, session: AsyncSession) -> None:
+    await state.clear()
+    await message.answer("Bekor qilindi.")
+    await show_main_menu(message, session)
+
+
+@router.message(ApproveUserStates.awaiting_id)
+async def ask_confirm_approve_user(
+    message: Message, state: FSMContext, session: AsyncSession
+) -> None:
+    if not message.text or not message.text.strip().isdigit():
+        await message.answer("Iltimos, faqat raqamlardan iborat Telegram ID yuboring.")
+        return
+
+    telegram_id = int(message.text.strip())
+    user = await SqlAlchemyBotUserRepository(session).get(telegram_id)
+    if user is None or user.role is not Role.PENDING:
+        await message.answer("Bu ID tasdiq kutayotganlar ro'yxatida topilmadi.")
+        return
+
+    await state.update_data(telegram_id=telegram_id)
+    await state.set_state(ApproveUserStates.confirming)
+    label = user.display_name or str(telegram_id)
+    await message.answer(
+        f"Tasdiqlaysizmi?\n{label} (ID: {telegram_id}) botdan foydalanishga ruxsat oladi.",
+        reply_markup=confirm_cancel(),
+    )
+
+
+@router.message(ApproveUserStates.confirming, F.text == BTN_CONFIRM)
+async def confirm_approve_user(message: Message, state: FSMContext, session: AsyncSession) -> None:
+    data = await state.get_data()
+    telegram_id = data["telegram_id"]
+    await SqlAlchemyBotUserRepository(session).set_role(telegram_id, Role.USER)
+    await state.clear()
+    await message.answer(f"✅ {telegram_id} endi botdan foydalanishi mumkin.")
     await show_main_menu(message, session)

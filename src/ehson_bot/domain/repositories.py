@@ -68,8 +68,9 @@ class BotUserRepository(Protocol):
     async def upsert(self, telegram_id: int, display_name: str | None) -> BotUser:
         """Register a user on first contact, or refresh their display name.
 
-        Never changes an existing user's role — that only happens via
-        ``set_role``.
+        A newly-registered user gets ``Role.PENDING`` — never changes an
+        existing user's role, and never grants USER or above by itself.
+        Role changes only happen via ``set_role``.
         """
         ...
 
@@ -80,6 +81,10 @@ class BotUserRepository(Protocol):
     async def list_by_role(self, role: Role) -> list[BotUser]: ...
 
     async def list_all(self) -> list[BotUser]: ...
+
+    async def list_approved(self) -> list[BotUser]:
+        """Every user whose role is not PENDING — who should receive reports."""
+        ...
 
 
 class BankAccountRepository(Protocol):

@@ -32,3 +32,8 @@ class RemoveEntryStates(StatesGroup):
 class SettingsStates(StatesGroup):
     awaiting_bank_account_text = State()
     confirming = State()
+
+
+class ApproveUserStates(StatesGroup):
+    awaiting_id = State()
+    confirming = State()

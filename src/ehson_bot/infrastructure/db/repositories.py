@@ -154,7 +154,9 @@ class SqlAlchemyBotUserRepository:
     async def upsert(self, telegram_id: int, display_name: str | None) -> BotUser:
         row = await self._session.get(BotUserRow, telegram_id)
         if row is None:
-            row = BotUserRow(telegram_id=telegram_id, role=Role.USER, display_name=display_name)
+            row = BotUserRow(
+                telegram_id=telegram_id, role=Role.PENDING, display_name=display_name
+            )
             self._session.add(row)
         else:
             row.display_name = display_name
@@ -182,6 +184,15 @@ class SqlAlchemyBotUserRepository:
 
     async def list_all(self) -> list[BotUser]:
         stmt = select(BotUserRow).order_by(BotUserRow.joined_at)
+        result = await self._session.execute(stmt)
+        return [_user_to_domain(row) for row in result.scalars().all()]
+
+    async def list_approved(self) -> list[BotUser]:
+        stmt = (
+            select(BotUserRow)
+            .where(BotUserRow.role != Role.PENDING)
+            .order_by(BotUserRow.joined_at)
+        )
         result = await self._session.execute(stmt)
         return [_user_to_domain(row) for row in result.scalars().all()]
 

@@ -10,8 +10,13 @@ from ehson_bot.domain.value_objects import Money
 
 
 class Role(str, Enum):
-    """A bot user's permission level. Ordered lowest to highest trust."""
+    """A bot user's permission level. Ordered lowest to highest trust.
 
+    PENDING is the default for anyone who has never been approved by a
+    Super Admin — they have no access at all until promoted to USER.
+    """
+
+    PENDING = "pending"
     USER = "user"
     TREASURER = "treasurer"
     SUPER_ADMIN = "super_admin"

@@ -1,8 +1,8 @@
-"""Reports available to every bot user: statistics, balance, donation account.
+"""Reports available to every *approved* bot user: statistics, balance,
+donation account, usage history.
 
-Unlike ``admin``/``donations``, this router has no role filter — Users are
-explicitly allowed to view reports, statistics, balance, and the donation
-account per the spec.
+Gated by ``IsUserOrAbove`` — a PENDING (not-yet-approved) caller must not
+see any of this, per the bot's private-by-default access model.
 """
 from __future__ import annotations
 
@@ -19,6 +19,7 @@ from ehson_bot.infrastructure.db.repositories import (
     SqlAlchemyExpenseRepository,
 )
 from ehson_bot.interfaces.telegram.common import show_main_menu
+from ehson_bot.interfaces.telegram.filters import IsUserOrAbove
 from ehson_bot.interfaces.telegram.keyboards import (
     BTN_ACCOUNT,
     BTN_BACK,
@@ -28,10 +29,14 @@ from ehson_bot.interfaces.telegram.keyboards import (
     BTN_PERIOD_TODAY,
     BTN_PERIOD_YEAR,
     BTN_STATS,
+    BTN_USAGE_HISTORY,
     stats_menu,
 )
 
+USAGE_HISTORY_LIMIT = 20
+
 router = Router(name="reports")
+router.message.filter(IsUserOrAbove())
 
 _PERIOD_LABELS = {
     Period.TODAY: "Bugungi",
@@ -98,6 +103,24 @@ async def show_account(message: Message, session: AsyncSession) -> None:
     account = await SqlAlchemyBankAccountRepository(session).get()
     text = account.text if account else "Hisob raqami hali sozlanmagan."
     await message.answer(f"<b>Hisob raqami:</b>\n{text}")
+
+
+@router.message(F.text == BTN_USAGE_HISTORY)
+async def show_usage_history(message: Message, session: AsyncSession) -> None:
+    """Read-only: what the money was used for. No donation entries, no
+    D#/X# codes, no delete affordance — those stay Treasurer-only.
+    """
+    expenses = await SqlAlchemyExpenseRepository(session).list_recent(USAGE_HISTORY_LIMIT)
+    if not expenses:
+        await message.answer("Hozircha xarajatlar yo'q.")
+        return
+
+    lines = [
+        f"{e.amount} so'm — {e.description} — {e.created_at:%Y-%m-%d}"
+        for e in expenses
+        if e.created_at is not None
+    ]
+    await message.answer("<b>Foydalanish tarixi:</b>\n" + "\n".join(lines))
 
 
 @router.message(StateFilter(None), F.text == BTN_BACK)

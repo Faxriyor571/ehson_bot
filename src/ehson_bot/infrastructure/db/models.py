@@ -47,7 +47,7 @@ class BotUserRow(Base):
     # autoincrement=False: this is the Telegram user's actual id, always
     # supplied explicitly on insert — never a generated sequence value.
     telegram_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=False)
-    role: Mapped[Role] = mapped_column(_RoleType, nullable=False, default=Role.USER)
+    role: Mapped[Role] = mapped_column(_RoleType, nullable=False, default=Role.PENDING)
     display_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     joined_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
