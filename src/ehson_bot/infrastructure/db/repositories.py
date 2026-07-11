@@ -182,11 +182,6 @@ class SqlAlchemyBotUserRepository:
         result = await self._session.execute(stmt)
         return [_user_to_domain(row) for row in result.scalars().all()]
 
-    async def list_all(self) -> list[BotUser]:
-        stmt = select(BotUserRow).order_by(BotUserRow.joined_at)
-        result = await self._session.execute(stmt)
-        return [_user_to_domain(row) for row in result.scalars().all()]
-
     async def list_approved(self) -> list[BotUser]:
         stmt = (
             select(BotUserRow)

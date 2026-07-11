@@ -20,10 +20,12 @@ from ehson_bot.infrastructure.db.repositories import (
 )
 from ehson_bot.interfaces.telegram.common import show_main_menu
 from ehson_bot.interfaces.telegram.filters import IsUserOrAbove
+from ehson_bot.interfaces.telegram.handlers.start import HELP_TEXT
 from ehson_bot.interfaces.telegram.keyboards import (
     BTN_ACCOUNT,
     BTN_BACK,
     BTN_BALANCE,
+    BTN_HELP,
     BTN_PERIOD_ALL,
     BTN_PERIOD_MONTH,
     BTN_PERIOD_TODAY,
@@ -121,6 +123,11 @@ async def show_usage_history(message: Message, session: AsyncSession) -> None:
         if e.created_at is not None
     ]
     await message.answer("<b>Foydalanish tarixi:</b>\n" + "\n".join(lines))
+
+
+@router.message(F.text == BTN_HELP)
+async def show_help(message: Message) -> None:
+    await message.answer(HELP_TEXT)
 
 
 @router.message(StateFilter(None), F.text == BTN_BACK)

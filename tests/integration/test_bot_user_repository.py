@@ -54,16 +54,6 @@ async def test_get_returns_none_when_missing(session: AsyncSession) -> None:
     assert await repo.get(42) is None
 
 
-async def test_list_all_returns_every_user_in_join_order(session: AsyncSession) -> None:
-    repo = SqlAlchemyBotUserRepository(session)
-    await repo.upsert(telegram_id=1, display_name="A")
-    await repo.upsert(telegram_id=2, display_name="B")
-
-    all_users = await repo.list_all()
-
-    assert [u.telegram_id for u in all_users] == [1, 2]
-
-
 async def test_list_by_role_finds_newly_registered_pending_users(session: AsyncSession) -> None:
     repo = SqlAlchemyBotUserRepository(session)
     await repo.upsert(telegram_id=1, display_name="A")

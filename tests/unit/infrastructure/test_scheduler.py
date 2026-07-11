@@ -15,21 +15,35 @@ from ehson_bot.infrastructure.scheduler import broadcast, format_daily_report
 
 
 def test_format_daily_report_lists_each_expense() -> None:
-    snapshot = PoolSnapshot(donations_total=Decimal(500000), expenses_total=Decimal(200000))
+    today = PoolSnapshot(donations_total=Decimal(450000), expenses_total=Decimal(200000))
 
-    text = format_daily_report(snapshot, ["Tibbiy yordam", "Oziq-ovqat"])
+    text = format_daily_report(today, Decimal(3600000), ["Tibbiy yordam", "Oziq-ovqat"])
 
-    assert "500,000" in text
+    assert "450,000" in text
     assert "200,000" in text
-    assert "300,000" in text  # balance
+    assert "3,600,000" in text
     assert "• Tibbiy yordam" in text
     assert "• Oziq-ovqat" in text
+
+
+def test_format_daily_report_uses_all_time_balance_not_todays_net() -> None:
+    """The running balance must reflect all-time totals, not today's net
+    change — matches the product spec's own example: a day with modest
+    activity but a much larger accumulated balance.
+    """
+    today = PoolSnapshot(donations_total=Decimal(450000), expenses_total=Decimal(200000))
+    assert today.balance == Decimal(250000)  # today's net — must NOT be shown as the balance
+
+    text = format_daily_report(today, Decimal(3600000), [])
+
+    assert "Joriy balans: 3,600,000 so'm" in text
+    assert "Joriy balans: 250,000 so'm" not in text
 
 
 def test_format_daily_report_handles_no_expenses() -> None:
     snapshot = PoolSnapshot(donations_total=Decimal(0), expenses_total=Decimal(0))
 
-    text = format_daily_report(snapshot, [])
+    text = format_daily_report(snapshot, Decimal(0), [])
 
     assert "bugun sarf bo'lmagan" in text
 

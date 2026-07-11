@@ -208,7 +208,8 @@ async def expense_receipt_skipped(message: Message, state: FSMContext) -> None:
 
 @router.message(ExpenseEntryStates.awaiting_receipt, F.photo)
 async def expense_receipt_uploaded(message: Message, state: FSMContext) -> None:
-    assert message.photo is not None
+    if not message.photo:
+        return
     await state.update_data(receipt_file_id=message.photo[-1].file_id)
     await _ask_expense_confirm(message, state)
 

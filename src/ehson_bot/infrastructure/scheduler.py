@@ -6,6 +6,7 @@ Admin) — the spec calls for it to reach "every user".
 from __future__ import annotations
 
 import logging
+from decimal import Decimal
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramForbiddenError
@@ -26,7 +27,13 @@ from ehson_bot.infrastructure.timeutil import start_of_today
 logger = logging.getLogger("ehson_bot.scheduler")
 
 
-def format_daily_report(snapshot: PoolSnapshot, expense_descriptions: list[str]) -> str:
+def format_daily_report(
+    today: PoolSnapshot, current_balance: Decimal, expense_descriptions: list[str]
+) -> str:
+    """``today`` is the day's donations/expenses; ``current_balance`` is the
+    all-time running balance — these are deliberately different periods
+    (the daily total is not the running balance).
+    """
     usage_lines = (
         "\n".join(f"• {description}" for description in expense_descriptions)
         if expense_descriptions
@@ -34,9 +41,9 @@ def format_daily_report(snapshot: PoolSnapshot, expense_descriptions: list[str])
     )
     return (
         "<b>Kunlik hisobot</b>\n\n"
-        f"Bugungi ehsonlar: {snapshot.donations_total:,.0f} so'm\n"
-        f"Bugungi xarajat: {snapshot.expenses_total:,.0f} so'm\n"
-        f"Joriy balans: {snapshot.balance:,.0f} so'm\n\n"
+        f"Bugungi ehsonlar: {today.donations_total:,.0f} so'm\n"
+        f"Bugungi xarajat: {today.expenses_total:,.0f} so'm\n"
+        f"Joriy balans: {current_balance:,.0f} so'm\n\n"
         f"Bugungi sarf:\n{usage_lines}"
     )
 
@@ -45,11 +52,18 @@ async def _build_daily_report_text() -> str:
     async with get_session() as session:
         donation_repo = SqlAlchemyDonationRepository(session)
         expense_repo = SqlAlchemyExpenseRepository(session)
+        use_case = GetPeriodReportUseCase(donation_repo, expense_repo)
 
-        snapshot = await GetPeriodReportUseCase(donation_repo, expense_repo).execute(Period.TODAY)
+        today_snapshot = await use_case.execute(Period.TODAY)
+        # The running balance must be all-time, not today's net change.
+        all_time_snapshot = await use_case.execute(Period.ALL)
         today_expenses = await expense_repo.list_since(start_of_today())
 
-    return format_daily_report(snapshot, [expense.description for expense in today_expenses])
+    return format_daily_report(
+        today_snapshot,
+        all_time_snapshot.balance,
+        [expense.description for expense in today_expenses],
+    )
 
 
 async def broadcast(bot: Bot, telegram_ids: list[int], text: str) -> None:
