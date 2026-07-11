@@ -1,0 +1,71 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ehson-bot"
+version = "0.1.0"
+description = "Anonymous charity donation ledger Telegram bot"
+requires-python = ">=3.13"
+dependencies = [
+    "aiogram==3.15.0",
+    "sqlalchemy[asyncio]==2.0.36",
+    "asyncpg==0.30.0",
+    "alembic==1.14.0",
+    "pydantic==2.9.2",
+    "pydantic-settings==2.7.1",
+    "python-dotenv==1.0.1",
+    "apscheduler==3.10.4",
+    # zoneinfo has no bundled tz database on Windows (and on minimal Linux
+    # images) — tzdata supplies it so ZoneInfo("Asia/Tashkent") always works.
+    "tzdata==2024.2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff==0.8.4",
+    "mypy==1.13.0",
+    "pytest==8.3.4",
+    "pytest-asyncio==0.25.0",
+    "pytest-cov==6.0.0",
+    "aiosqlite==0.20.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ehson_bot"]
+
+# ---------------------------------------------------------------------------
+# Ruff
+# ---------------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "N", "C4"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["ehson_bot"]
+
+# ---------------------------------------------------------------------------
+# Mypy
+# ---------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.13"
+mypy_path = "src"
+strict = true
+warn_unused_ignores = true
+exclude = ["alembic/"]
+
+[[tool.mypy.overrides]]
+module = ["asyncpg.*", "apscheduler.*"]
+ignore_missing_imports = true
+
+# ---------------------------------------------------------------------------
+# Pytest
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
