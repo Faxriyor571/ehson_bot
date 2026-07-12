@@ -1,20 +1,37 @@
+# Explicit project name: pins container/network/volume naming regardless of
+# what directory this is cloned into, so it can never collide with another
+# Compose project (e.g. an unrelated app) running on the same host.
+name: mahfiy-ehson
+
 services:
   postgres:
     image: postgres:16-alpine
+    container_name: mahfiy-ehson-postgres
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-ehson_user}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ehson_password}
       POSTGRES_DB: ${POSTGRES_DB:-ehson_db}
     ports:
-      - "5433:5432"
+      # Bound to localhost only: Postgres is never reachable from outside
+      # this host, regardless of firewall config. The bot itself will reach
+      # it over this same loopback port (or the internal Docker network,
+      # once/if the bot is containerized in the same project).
+      - "127.0.0.1:5433:5432"
     volumes:
       - ehson_postgres_data:/var/lib/postgresql/data
+    networks:
+      - ehson_network
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER}"]
       interval: 5s
       timeout: 5s
       retries: 10
 
+networks:
+  ehson_network:
+    name: mahfiy-ehson-network
+
 volumes:
   ehson_postgres_data:
+    name: mahfiy-ehson-postgres-data
