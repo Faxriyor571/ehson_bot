@@ -1,10 +1,11 @@
 """Adapter: implements ``domain.repositories.DonationRepository`` with SQLAlchemy."""
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ehson_bot.domain.entities import (
@@ -12,8 +13,8 @@ from ehson_bot.domain.entities import (
     BotUser,
     Donation,
     Expense,
-    PaymentSession,
-    PaymentStatus,
+    PendingPayment,
+    PendingPaymentStatus,
     Role,
     TreasurerId,
 )
@@ -23,7 +24,7 @@ from ehson_bot.infrastructure.db.models import (
     BotUserRow,
     DonationRow,
     ExpenseRow,
-    PaymentSessionRow,
+    PendingPaymentRow,
 )
 
 _BANK_ACCOUNT_ROW_ID = 1
@@ -50,17 +51,17 @@ def _expense_to_domain(row: ExpenseRow) -> Expense:
     )
 
 
-def _payment_session_to_domain(row: PaymentSessionRow) -> PaymentSession:
-    return PaymentSession(
+def _pending_payment_to_domain(row: PendingPaymentRow) -> PendingPayment:
+    return PendingPayment(
         id=row.id,
-        provider_session_id=row.provider_session_id,
+        reference_code=row.reference_code,
         amount=Money(row.amount),
-        provider=row.provider,
         donor_telegram_id=row.donor_telegram_id,
-        status=PaymentStatus(row.status),
+        receipt_file_id=row.receipt_file_id,
+        status=PendingPaymentStatus(row.status),
         donation_id=row.donation_id,
         created_at=row.created_at,
-        confirmed_at=row.confirmed_at,
+        decided_at=row.decided_at,
     )
 
 
@@ -269,55 +270,75 @@ class SqlAlchemyBankAccountRepository:
         )
 
 
-class SqlAlchemyPaymentSessionRepository:
-    """Satisfies ``PaymentSessionRepository`` structurally (via ``Protocol``)."""
+class SqlAlchemyPendingPaymentRepository:
+    """Satisfies ``PendingPaymentRepository`` structurally (via ``Protocol``)."""
 
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def add(self, session: PaymentSession) -> PaymentSession:
-        row = PaymentSessionRow(
-            provider_session_id=session.provider_session_id,
-            amount=session.amount.amount,
-            provider=session.provider,
-            donor_telegram_id=session.donor_telegram_id,
-            status=session.status,
+    async def add(self, payment: PendingPayment) -> PendingPayment:
+        row = PendingPaymentRow(
+            reference_code=payment.reference_code,
+            amount=payment.amount.amount,
+            donor_telegram_id=payment.donor_telegram_id,
+            receipt_file_id=payment.receipt_file_id,
+            status=payment.status,
         )
         self._session.add(row)
         await self._session.commit()
         await self._session.refresh(row)
-        return _payment_session_to_domain(row)
+        return _pending_payment_to_domain(row)
 
-    async def get(self, provider_session_id: str) -> PaymentSession | None:
-        stmt = select(PaymentSessionRow).where(
-            PaymentSessionRow.provider_session_id == provider_session_id
+    async def get_by_reference(self, reference_code: str) -> PendingPayment | None:
+        stmt = select(PendingPaymentRow).where(
+            PendingPaymentRow.reference_code == reference_code
         )
         row = (await self._session.execute(stmt)).scalar_one_or_none()
-        return _payment_session_to_domain(row) if row is not None else None
+        return _pending_payment_to_domain(row) if row is not None else None
 
-    async def mark_paid(self, provider_session_id: str, donation_id: int) -> PaymentSession | None:
-        stmt = select(PaymentSessionRow).where(
-            PaymentSessionRow.provider_session_id == provider_session_id
+    async def list_pending(self) -> list[PendingPayment]:
+        stmt = (
+            select(PendingPaymentRow)
+            .where(PendingPaymentRow.status == PendingPaymentStatus.PENDING)
+            .order_by(PendingPaymentRow.created_at)
         )
-        row = (await self._session.execute(stmt)).scalar_one_or_none()
-        if row is None:
+        result = await self._session.execute(stmt)
+        return [_pending_payment_to_domain(row) for row in result.scalars().all()]
+
+    async def try_claim(
+        self, reference_code: str, decision: PendingPaymentStatus
+    ) -> PendingPayment | None:
+        # The pre-scrub snapshot, for the caller to route a private message.
+        # Reading it here is not the race guard -- the conditional UPDATE
+        # below is -- so a stale read at this point is harmless: it's only
+        # ever used if that UPDATE actually reports a matched row.
+        existing = await self.get_by_reference(reference_code)
+        if existing is None:
             return None
-        row.status = PaymentStatus.PAID
-        row.donation_id = donation_id
-        row.donor_telegram_id = None
-        row.confirmed_at = func.now()
-        await self._session.commit()
-        await self._session.refresh(row)
-        return _payment_session_to_domain(row)
 
-    async def mark_cancelled(self, provider_session_id: str) -> PaymentSession | None:
-        stmt = select(PaymentSessionRow).where(
-            PaymentSessionRow.provider_session_id == provider_session_id
+        stmt = (
+            update(PendingPaymentRow)
+            .where(PendingPaymentRow.reference_code == reference_code)
+            .where(PendingPaymentRow.status == PendingPaymentStatus.PENDING)
+            .values(status=decision, donor_telegram_id=None, decided_at=func.now())
         )
-        row = (await self._session.execute(stmt)).scalar_one_or_none()
-        if row is None:
-            return None
-        row.status = PaymentStatus.CANCELLED
+        result = await self._session.execute(stmt)
         await self._session.commit()
-        await self._session.refresh(row)
-        return _payment_session_to_domain(row)
+
+        if result.rowcount == 0:
+            # Someone else already decided it between our read and our
+            # write -- lost the race, and this is a safe no-op.
+            return None
+        # Only the persisted row is scrubbed -- the returned object keeps
+        # the pre-scrub donor_telegram_id so the caller can still route a
+        # private message this one time.
+        return replace(existing, status=decision)
+
+    async def attach_donation(self, reference_code: str, donation_id: int) -> None:
+        stmt = (
+            update(PendingPaymentRow)
+            .where(PendingPaymentRow.reference_code == reference_code)
+            .values(donation_id=donation_id)
+        )
+        await self._session.execute(stmt)
+        await self._session.commit()

@@ -2,33 +2,36 @@
 
 Telegram bot for a small charity group. Donations are pooled anonymously —
 donor identity is never captured anywhere in the system, the schema simply
-has no field for it; a donor's Telegram ID is only ever held *transiently*,
-in `payment_sessions`, while their payment is outstanding, purely to route
-the thank-you message, and is scrubbed the moment the payment confirms.
-Donations happen automatically: any approved member presses "🤲 Ehson
-qilish", enters an amount, and pays through a provider (`MockPaymentProvider`
-today; Click/Payme later, without changing this flow) — no one manually
-records a donation anymore. What's fully transparent is *usage*: every
-expense is recorded with an amount, a required description, and
-(optionally) a receipt photo, and anyone can see today's/monthly/yearly
-totals and the current balance. A scheduled job posts a report to every
-registered user at 23:59 (Asia/Tashkent).
+has no field for it. There is no payment gateway integrated, so a Super
+Admin manually verifies every donation against the bank account by eye —
+but that Super Admin must never learn *who* paid. An approved member picks
+an amount, sees the donation card, optionally attaches a receipt photo, and
+submits; the bot generates a random public `reference_code` (e.g.
+`EH-8F42K`) and that is the *only* donor-facing identifier the Super Admin
+ever sees, in a notification containing nothing else identifying. The
+donor's Telegram ID is held only *transiently*, in `pending_payments`, to
+route the private confirm/reject message, and is scrubbed the instant a
+Super Admin decides. What's fully transparent is *usage*: every expense is
+recorded with an amount, a required description, and (optionally) a
+receipt photo, and anyone can see today's/monthly/yearly totals and the
+current balance. A scheduled job posts a report to every registered user
+at 23:59 (Asia/Tashkent).
 
 ## Roles
 
 There are only three roles — no separate donor-only tier, because donating
 no longer depends on a role check at all: what actually protects a donation
-from being fabricated is the payment provider's confirmation, not who's
-allowed to press the button. `Treasurer` here means "approved member," not
-"bookkeeper" — it grants viewing and donating, nothing administrative or
-financial-management. All recording/editing/deleting and every
-administrative action is Super-Admin-only.
+from being fabricated is a Super Admin manually verifying the bank account,
+not who's allowed to press the button. `Treasurer` here means "approved
+member," not "bookkeeper" — it grants viewing and donating, nothing
+administrative or financial-management. All recording/editing/deleting and
+every administrative action is Super-Admin-only.
 
 | Role | Can |
 |---|---|
 | **Pending** (default) | Nothing — locked out until a Super Admin approves them. |
-| **Treasurer** | View statistics, balance, reports, and recent donation/expense entries; donate via "🤲 Ehson qilish". This is the only non-admin approved role — it cannot record, edit, or delete anything, approve users, manage roles, or touch settings. |
-| **Super Admin** | Everything a Treasurer can, plus record/edit/delete expenses, delete a mistaken entry, approve pending users (grants Treasurer), revoke a member's access (demotes back to Pending — there's no lower tier to fall back to), and configure the donation account (card number, card holder, bank name — set via a guided 3-step flow, not free text; shown as a manual fallback alongside the "Pay Now" button). |
+| **Treasurer** | View statistics, balance, reports, and recent donation/expense entries; donate via "🤲 Ehson qilish". This is the only non-admin approved role — it cannot record, edit, or delete anything, approve users, manage roles, review payments, or touch settings. |
+| **Super Admin** | Everything a Treasurer can, plus record/edit/delete expenses, delete a mistaken entry, approve pending users (grants Treasurer), revoke a member's access (demotes back to Pending — there's no lower tier to fall back to), configure the donation account (card number, card holder, bank name — set via a guided 3-step flow, not free text), and manually confirm/reject a pending payment by its reference code — never by donor identity, which this screen structurally cannot look up. |
 
 Every real Telegram user becomes `Pending` on their first `/start` and needs
 a Super Admin to approve them before they can do anything — see the lockout
@@ -51,7 +54,8 @@ pip install -e ".[dev]"
 copy .env.example .env
 # Edit .env: BOT_TOKEN (from @BotFather), SUPER_ADMIN_IDS (Telegram numeric
 # user IDs to bootstrap as Super Admin, comma-separated — get your own from
-# @userinfobot), TIMEZONE (default Asia/Tashkent)
+# @userinfobot), TIMEZONE (default Asia/Tashkent). PUBLIC_GROUP_CHAT_ID is
+# optional — leave unset to skip the public donation-announcement step.
 
 docker compose up -d      # starts Postgres
 alembic upgrade head
@@ -83,16 +87,45 @@ ruff check src tests
 mypy src
 ```
 
+## Manual payment review
+
+No payment gateway is integrated, so a Super Admin has to look at the bank
+account and decide whether a claimed donation actually arrived — but that
+Super Admin must never be able to tell who claimed it. The flow:
+
+1. An approved member picks an amount, sees the donation card, optionally
+   attaches a receipt photo, and confirms.
+2. `SubmitPendingPaymentUseCase` creates a `PendingPayment` with a random
+   `reference_code` (e.g. `EH-8F42K`) and notifies every Super Admin with
+   *only* that code, a generic non-identifying label, the amount, the time,
+   and the receipt if one was attached — never a Telegram ID, username, or
+   display name.
+3. The Super Admin checks the bank account by eye, then confirms or rejects
+   by typing the reference code back to the bot (`handlers/admin.py`'s
+   "🕒 Kutilayotgan ehsonlar" screen) — there is no repository method that
+   looks a claim up by donor, so a donor-lookup screen is structurally
+   impossible to build here, not just absent from the UI.
+4. Confirming calls `ConfirmPendingPaymentUseCase`, which creates the
+   `Donation` (crediting `recorded_by` to the *confirming Super Admin's own*
+   Telegram ID — a real person verified this one, so that field means what
+   it always meant), privately thanks the donor, and — if
+   `PUBLIC_GROUP_CHAT_ID` is configured — posts an anonymous announcement to
+   the public group. Rejecting notifies the donor privately instead.
+
+With multiple Super Admins, two people can open the same reference code at
+once. `PendingPaymentRepository.try_claim` is a single atomic conditional
+write (`UPDATE ... WHERE status = 'pending'`), not a read-then-write, so at
+most one of them can ever win — the other's confirm/reject is a safe,
+idempotent no-op ("already reviewed"), and at most one `Donation` is ever
+created per reference code no matter how the two requests interleave.
+
 ## Design note: anonymity
 
 `Donation` rows (`infrastructure/db/models.py::DonationRow`) have no
 donor-identifying column at all — not hidden by permissions, simply not
-present in the schema. Now that donations are payment-originated,
-`recorded_by_id` is set to a fixed, documented sentinel
-(`SYSTEM_TREASURER_ID = 0`, never a real Telegram id) rather than a human
-treasurer, since no one manually recorded it. `payment_sessions` is the only
-place a donor's Telegram ID is ever stored, and only *transiently* — the
-repository scrubs it (`donor_telegram_id = NULL`) the instant a session
-leaves PENDING, so it never becomes a permanent donor-to-donation link.
-`Expense` rows are the mirror image of `Donation`: a mandatory `description`
-so usage is always traceable, plus an optional receipt photo.
+present in the schema. `pending_payments` is the only place a donor's
+Telegram ID is ever stored, and only *transiently* — the repository scrubs
+it (`donor_telegram_id = NULL`) the instant a Super Admin confirms or
+rejects, so it never becomes a permanent donor-to-donation link. `Expense`
+rows are the mirror image of `Donation`: a mandatory `description` so usage
+is always traceable, plus an optional receipt photo.

@@ -20,3 +20,10 @@ class InvalidExpenseDescription(DomainError):
 
 class ExpenseNotFound(DomainError):
     """An expense referenced by id does not exist in the ledger."""
+
+
+class ReferenceCodeGenerationError(DomainError):
+    """Could not find an unused reference code within the retry budget --
+    astronomically unlikely at this app's scale; signals something is
+    actually wrong (e.g. a broken random source) rather than bad luck.
+    """

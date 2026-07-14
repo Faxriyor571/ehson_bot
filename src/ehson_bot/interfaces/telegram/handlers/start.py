@@ -64,6 +64,8 @@ def help_text(role: Role) -> str:
             "\n<b>Boshqaruv</b>",
             "➖ Xarajat qo'shish — yangi xarajatni qayd etish",
             "👥 A'zolarni boshqarish — a'zolarni tasdiqlash yoki kirishini bekor qilish",
+            "🕒 Kutilayotgan ehsonlar — bank hisobini tekshirib, murojaat kodi "
+            "orqali ehsonni tasdiqlash yoki rad etish",
             "⚙️ Sozlamalar — ehson hisob raqamini sozlash",
         ]
 

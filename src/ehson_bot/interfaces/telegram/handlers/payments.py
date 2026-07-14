@@ -1,38 +1,41 @@
-"""Any approved member's flow: pick an amount, confirm, pay.
+"""Any approved member's flow: pick an amount, see the donation card, submit
+a receipt, and wait for a Super Admin to manually verify the bank account.
 
 Gated by ``IsTreasurerOrAbove`` (the lowest approved rank — there is no
 separate donor-only tier) rather than anything donation-specific: what
-actually protects the donation from being fabricated is the payment
-provider's confirmation, not a role check on who's allowed to ask for one.
+protects the donation from being fabricated is a Super Admin actually
+checking the bank account, not a role check on who's allowed to submit one.
 
-Flow: preset amount (or "Boshqa summa" for a custom one) -> a confirmation
-screen showing the amount and payment method -> "Pay Now" -> wait. No
-``PaymentSession`` is created until the donor confirms the amount, so a typo
-caught at the confirmation step never leaves an abandoned session behind.
-
-Confirmation of the payment itself never arrives through this router — it
-happens out-of-band (the mock provider's delayed self-trigger today, a real
-provider's webhook handler later) and pushes the thank-you message directly
-via ``bot.send_message``, the same "outside the request/response cycle"
-pattern ``infrastructure/scheduler.py::send_daily_report`` already uses.
+Flow: preset amount (or "Boshqa summa" for a custom one) -> the donation
+card -> an optional receipt photo -> a confirmation screen -> submit. A
+``PendingPayment`` is only created on that final submit, with a random
+public ``reference_code`` (e.g. "EH-8F42K") — the *only* donor-facing
+identifier a Super Admin ever sees. The donor's Telegram ID is stored
+internally purely to route the private confirm/reject message later, and is
+scrubbed by the repository the instant a Super Admin decides — see
+``PendingPayment`` in the domain layer for the full rationale. Confirmation
+itself happens entirely in ``handlers/admin.py``; this router never learns
+what a Super Admin ultimately decides beyond what it can see (nothing).
 """
 from __future__ import annotations
 
 from decimal import Decimal, InvalidOperation
 
-from aiogram import F, Router
+from aiogram import Bot, F, Router
+from aiogram.exceptions import TelegramForbiddenError
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ehson_bot.application.use_cases.request_payment import (
-    RequestPaymentInput,
-    RequestPaymentUseCase,
+from ehson_bot.application.use_cases.submit_pending_payment import (
+    SubmitPendingPaymentInput,
+    SubmitPendingPaymentUseCase,
 )
-from ehson_bot.domain.repositories import PaymentProvider
+from ehson_bot.domain.entities import PendingPayment, Role
 from ehson_bot.infrastructure.db.repositories import (
     SqlAlchemyBankAccountRepository,
-    SqlAlchemyPaymentSessionRepository,
+    SqlAlchemyBotUserRepository,
+    SqlAlchemyPendingPaymentRepository,
 )
 from ehson_bot.interfaces.telegram.common import esc, show_main_menu
 from ehson_bot.interfaces.telegram.filters import IsTreasurerOrAbove
@@ -45,10 +48,11 @@ from ehson_bot.interfaces.telegram.keyboards import (
     BTN_CANCEL,
     BTN_CONFIRM,
     BTN_OTHER_AMOUNT,
+    BTN_SKIP,
     amount_choice_menu,
     cancel_only,
     confirm_cancel,
-    pay_now_keyboard,
+    skip_or_cancel,
 )
 from ehson_bot.interfaces.telegram.states import PaymentStates
 
@@ -61,6 +65,10 @@ _PRESET_AMOUNTS: dict[str, Decimal] = {
     BTN_AMOUNT_200K: Decimal(200000),
     BTN_AMOUNT_500K: Decimal(500000),
 }
+
+# Shown to the Super Admin instead of any identifying information —
+# "Allah's beloved servant", a deliberately generic, respectful stand-in.
+_ANONYMOUS_DONOR_LABEL = "Allohning suygan bandasi"
 
 
 def _parse_amount(text: str) -> Decimal | None:
@@ -80,10 +88,9 @@ async def start_payment(message: Message, state: FSMContext) -> None:
 
 @router.message(PaymentStates.choosing_amount, F.text == BTN_CANCEL)
 @router.message(PaymentStates.awaiting_amount, F.text == BTN_CANCEL)
+@router.message(PaymentStates.awaiting_receipt, F.text == BTN_CANCEL)
 @router.message(PaymentStates.confirming, F.text == BTN_CANCEL)
-async def cancel_before_payment(
-    message: Message, state: FSMContext, session: AsyncSession
-) -> None:
+async def cancel_payment(message: Message, state: FSMContext, session: AsyncSession) -> None:
     await state.clear()
     await message.answer("Bekor qilindi.")
     await show_main_menu(message, session)
@@ -97,82 +104,124 @@ async def ask_custom_amount(message: Message, state: FSMContext) -> None:
     )
 
 
-async def _ask_payment_confirm(
-    message: Message, state: FSMContext, amount: Decimal, payment_provider: PaymentProvider
-) -> None:
-    await state.update_data(amount=str(amount))
-    await state.set_state(PaymentStates.confirming)
+async def _show_donation_card(message: Message, state: FSMContext, session: AsyncSession) -> None:
+    account = await SqlAlchemyBankAccountRepository(session).get()
+    if account is None:
+        await state.clear()
+        await message.answer(
+            "🤲 Hisob raqami hali sozlanmagan.\nIltimos, administrator bilan bog'laning."
+        )
+        await show_main_menu(message, session)
+        return
+
+    await state.set_state(PaymentStates.awaiting_receipt)
     await message.answer(
-        "<b>🤲 Ehsonni tasdiqlang</b>\n\n"
-        f"💰 Summa: {amount:,.0f} so'm\n"
-        f"💳 Usul: {payment_provider.display_name}\n\n"
-        "Ehsoningiz uchun oldindan rahmat — tasdiqlab, to'lovga o'ting.",
-        reply_markup=confirm_cancel(),
+        "Quyidagi hisob raqamiga ehson yuboring:\n\n"
+        f"💳 Karta raqami: <code>{esc(account.card_number)}</code>\n"
+        f"👤 Karta egasi: {esc(account.card_holder)}\n"
+        f"🏦 Bank: {esc(account.bank_name)}\n\n"
+        "To'lov chekini (skrinshot) yuborasizmi? (ixtiyoriy)",
+        reply_markup=skip_or_cancel(),
     )
 
 
 @router.message(PaymentStates.choosing_amount, F.text.in_(_PRESET_AMOUNTS))
-async def preset_amount_chosen(
-    message: Message, state: FSMContext, payment_provider: PaymentProvider
-) -> None:
+async def preset_amount_chosen(message: Message, state: FSMContext, session: AsyncSession) -> None:
     if message.text is None:
         return
-    await _ask_payment_confirm(message, state, _PRESET_AMOUNTS[message.text], payment_provider)
+    await state.update_data(amount=str(_PRESET_AMOUNTS[message.text]))
+    await _show_donation_card(message, state, session)
 
 
 @router.message(PaymentStates.awaiting_amount)
-async def custom_amount_entered(
-    message: Message, state: FSMContext, payment_provider: PaymentProvider
-) -> None:
+async def custom_amount_entered(message: Message, state: FSMContext, session: AsyncSession) -> None:
     amount = _parse_amount(message.text or "")
     if amount is None:
         await message.answer("Summa noto'g'ri. Masalan: 150000")
         return
-    await _ask_payment_confirm(message, state, amount, payment_provider)
+    await state.update_data(amount=str(amount))
+    await _show_donation_card(message, state, session)
+
+
+async def _ask_payment_confirm(message: Message, state: FSMContext) -> None:
+    data = await state.get_data()
+    await state.set_state(PaymentStates.confirming)
+    amount = Decimal(data["amount"])
+    receipt_line = "\nChek: biriktirildi" if data.get("receipt_file_id") else "\nChek: yuborilmadi"
+    await message.answer(
+        "<b>Tasdiqlaysizmi?</b>\n\n"
+        f"💰 Summa: {amount:,.0f} so'm{receipt_line}\n\n"
+        "Tasdiqlagach, administrator hisobingizni tekshirib chiqadi.",
+        reply_markup=confirm_cancel(),
+    )
+
+
+@router.message(PaymentStates.awaiting_receipt, F.text == BTN_SKIP)
+async def receipt_skipped(message: Message, state: FSMContext) -> None:
+    await state.update_data(receipt_file_id=None)
+    await _ask_payment_confirm(message, state)
+
+
+@router.message(PaymentStates.awaiting_receipt, F.photo)
+async def receipt_uploaded(message: Message, state: FSMContext) -> None:
+    if not message.photo:
+        return
+    await state.update_data(receipt_file_id=message.photo[-1].file_id)
+    await _ask_payment_confirm(message, state)
+
+
+@router.message(PaymentStates.awaiting_receipt)
+async def receipt_invalid(message: Message) -> None:
+    await message.answer("Iltimos, chek rasmini yuboring yoki “O'tkazib yuborish”ni bosing.")
+
+
+async def _notify_super_admins(bot: Bot, session: AsyncSession, payment: PendingPayment) -> None:
+    """The only information a Super Admin ever receives about a donor: a
+    reference code, a generic non-identifying label, the amount, the time,
+    and the receipt if one was attached. Never the Telegram ID, username,
+    display name, or anything else that could identify who paid.
+    """
+    text = (
+        "🆔 Reference:\n"
+        f"{payment.reference_code}\n\n"
+        f"👤 {_ANONYMOUS_DONOR_LABEL}\n\n"
+        f"💰 {payment.amount} so'm\n\n"
+        f"🕒 {payment.created_at:%Y-%m-%d %H:%M}"
+    )
+
+    admins = await SqlAlchemyBotUserRepository(session).list_by_role(Role.SUPER_ADMIN)
+    for admin in admins:
+        try:
+            if payment.receipt_file_id is not None:
+                await bot.send_photo(admin.telegram_id, photo=payment.receipt_file_id, caption=text)
+            else:
+                await bot.send_message(admin.telegram_id, text)
+        except TelegramForbiddenError:
+            pass
 
 
 @router.message(PaymentStates.confirming, F.text == BTN_CONFIRM)
-async def confirm_amount(
-    message: Message,
-    state: FSMContext,
-    session: AsyncSession,
-    payment_provider: PaymentProvider,
+async def confirm_payment(
+    message: Message, state: FSMContext, session: AsyncSession, bot: Bot
 ) -> None:
     if message.from_user is None:
         return
     data = await state.get_data()
-    amount = Decimal(data["amount"])
 
-    payment_session = await RequestPaymentUseCase(payment_provider).execute(
-        RequestPaymentInput(amount=amount, donor_telegram_id=message.from_user.id)
-    )
-
-    await state.update_data(provider_session_id=payment_session.provider_session_id)
-    await state.set_state(PaymentStates.awaiting_payment)
-
-    text = f"To'lovni yakunlash uchun quyidagi tugmani bosing:\nSumma: {amount:,.0f} so'm"
-
-    account = await SqlAlchemyBankAccountRepository(session).get()
-    if account is not None:
-        text += (
-            "\n\nYoki quyidagi hisob raqamiga to'g'ridan-to'g'ri o'tkazishingiz mumkin:\n"
-            f"💳 Karta raqami: <code>{esc(account.card_number)}</code>\n"
-            f"👤 Karta egasi: {esc(account.card_holder)}\n"
-            f"🏦 Bank: {esc(account.bank_name)}"
+    use_case = SubmitPendingPaymentUseCase(SqlAlchemyPendingPaymentRepository(session))
+    payment = await use_case.execute(
+        SubmitPendingPaymentInput(
+            amount=Decimal(data["amount"]),
+            donor_telegram_id=message.from_user.id,
+            receipt_file_id=data.get("receipt_file_id"),
         )
-
-    await message.answer(text, reply_markup=pay_now_keyboard(payment_session.pay_url or ""))
-    await message.answer(
-        "To'lov tugagach xabar beramiz. Bekor qilish uchun:", reply_markup=cancel_only()
     )
 
-
-@router.message(PaymentStates.awaiting_payment, F.text == BTN_CANCEL)
-async def cancel_payment(message: Message, state: FSMContext, session: AsyncSession) -> None:
-    data = await state.get_data()
-    provider_session_id = data.get("provider_session_id")
-    if provider_session_id:
-        await SqlAlchemyPaymentSessionRepository(session).mark_cancelled(provider_session_id)
     await state.clear()
-    await message.answer("Bekor qilindi.")
+    await message.answer(
+        "✅ Ehsoningiz qabul qilindi va tekshiruv uchun yuborildi.\n\n"
+        f"🆔 Murojaat kodi: <code>{payment.reference_code}</code>\n\n"
+        "Administrator hisobingizni tasdiqlagach, sizga xabar beramiz."
+    )
+    await _notify_super_admins(bot, session, payment)
     await show_main_menu(message, session)

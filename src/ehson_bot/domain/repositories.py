@@ -14,7 +14,8 @@ from ehson_bot.domain.entities import (
     BotUser,
     Donation,
     Expense,
-    PaymentSession,
+    PendingPayment,
+    PendingPaymentStatus,
     Role,
 )
 
@@ -110,44 +111,43 @@ class BankAccountRepository(Protocol):
     async def set(self, card_number: str, card_holder: str, bank_name: str) -> BankAccountInfo: ...
 
 
-class PaymentSessionRepository(Protocol):
-    """Persistence port for payment attempts — the operational record of a
-    payment, kept separate from the anonymous ``Donation`` it may produce.
+class PendingPaymentRepository(Protocol):
+    """Persistence port for donor-submitted payment claims — kept separate
+    from the anonymous ``Donation`` a claim may produce. The Super Admin
+    interface must only ever read a ``PendingPayment`` via
+    ``reference_code`` or ``list_pending`` — never a method keyed on
+    ``donor_telegram_id``, since that would make it possible to build a
+    donor-facing lookup screen by accident.
     """
 
-    async def add(self, session: PaymentSession) -> PaymentSession:
-        """Persist a new PENDING session and return it with id populated."""
+    async def add(self, payment: PendingPayment) -> PendingPayment:
+        """Persist a new PENDING claim and return it with id populated."""
         ...
 
-    async def get(self, provider_session_id: str) -> PaymentSession | None: ...
+    async def get_by_reference(self, reference_code: str) -> PendingPayment | None: ...
 
-    async def mark_paid(self, provider_session_id: str, donation_id: int) -> PaymentSession | None:
-        """Transition PENDING -> PAID, link the resulting donation, and scrub
-        ``donor_telegram_id`` — the correlation has served its purpose.
-        Returns None if no such session exists.
+    async def list_pending(self) -> list[PendingPayment]:
+        """Every claim still awaiting a Super Admin decision, oldest first."""
+        ...
+
+    async def try_claim(
+        self, reference_code: str, decision: PendingPaymentStatus
+    ) -> PendingPayment | None:
+        """Atomically transition PENDING -> ``decision`` (CONFIRMED or
+        REJECTED) and scrub ``donor_telegram_id`` — a single conditional
+        write (``WHERE status = 'pending'``), not a read-then-write, so two
+        Super Admins racing to decide the same reference code can never both
+        win. Returns the claim as it stood immediately before the scrub (so
+        the caller can still route a private message) if this call won the
+        race; returns None if the claim doesn't exist or someone else
+        already decided it — a safe, idempotent no-op for the loser.
         """
         ...
 
-    async def mark_cancelled(self, provider_session_id: str) -> PaymentSession | None:
-        """Transition PENDING -> CANCELLED. Returns None if no such session exists."""
-        ...
-
-
-class PaymentProvider(Protocol):
-    """A payment gateway adapter. ``MockPaymentProvider`` is the only
-    implementation for now; a real provider (Click/Payme) will also need
-    webhook-signature verification, which is an HTTP-layer concern added
-    alongside that real integration, not speculatively defined here first.
-    """
-
-    display_name: str
-    """Human-readable label shown on the donor-facing confirmation screen
-    before a session is created (e.g. "Click", "Payme") — never the raw
-    provider identifier stored on ``PaymentSession.provider``.
-    """
-
-    async def create_payment(self, amount: Decimal, donor_telegram_id: int) -> PaymentSession:
-        """Start a payment attempt and return the PENDING session, including
-        wherever the caller should send the donor to pay.
+    async def attach_donation(self, reference_code: str, donation_id: int) -> None:
+        """Links the resulting donation to an already-CONFIRMED claim. Only
+        ever called after ``try_claim`` has won the race for this code —
+        by then no concurrent caller can interfere, so this step needs no
+        guard of its own.
         """
         ...

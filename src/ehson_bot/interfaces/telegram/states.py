@@ -33,5 +33,10 @@ class BankAccountStates(StatesGroup):
 class PaymentStates(StatesGroup):
     choosing_amount = State()
     awaiting_amount = State()
+    awaiting_receipt = State()
     confirming = State()
-    awaiting_payment = State()
+
+
+class ReviewPendingPaymentStates(StatesGroup):
+    awaiting_reference_code = State()
+    confirming = State()

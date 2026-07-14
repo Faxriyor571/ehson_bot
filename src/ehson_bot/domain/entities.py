@@ -15,9 +15,10 @@ class Role(str, Enum):
     PENDING is the default for anyone who has never been approved by a
     Super Admin — they have no access at all until approved. There is no
     separate "regular member" tier: approving someone grants TREASURER
-    directly, since donation-taking no longer depends on role (the payment
-    provider's confirmation is what protects it) and every approved member
-    of this small, trusted group is also trusted to record expenses.
+    directly, since donation-taking no longer depends on role (a Super
+    Admin manually verifying the bank account is what protects it) and
+    every approved member of this small, trusted group is also trusted to
+    record expenses.
     """
 
     PENDING = "pending"
@@ -100,38 +101,39 @@ class BankAccountInfo:
     updated_at: datetime | None = None
 
 
-class PaymentStatus(str, Enum):
-    """Lifecycle of one payment attempt, tracked independently of whether
-    it ever becomes a ``Donation``."""
+class PendingPaymentStatus(str, Enum):
+    """Lifecycle of one donor-submitted payment claim, tracked independently
+    of whether it ever becomes a ``Donation``."""
 
     PENDING = "pending"
-    PAID = "paid"
-    CANCELLED = "cancelled"
+    CONFIRMED = "confirmed"
+    REJECTED = "rejected"
 
 
 @dataclass(slots=True)
-class PaymentSession:
-    """One donor's attempt to pay through a provider (mock today, a real
-    gateway later) — the operational record of a payment, not the donation
-    itself.
+class PendingPayment:
+    """A donor's claim of having paid, awaiting a Super Admin to manually
+    verify it against the bank account — the operational record of that
+    claim, not the donation itself.
 
-    ``donor_telegram_id`` exists only to know who to thank and to route the
-    confirmation message. It is a *transient* correlation: the moment this
-    session leaves PENDING, the caller must clear it — this row is the
-    audit trail of "a payment happened and what it became", not a permanent
-    donor-to-donation link. The resulting ``Donation`` never carries it.
+    There is no real payment gateway integrated, so a human has to look at
+    the bank account and decide "did this money actually arrive" — but that
+    human must never learn *who* sent it. ``reference_code`` is the only
+    donor-facing identifier the Super Admin ever sees (in notifications, in
+    the pending-payments queue, everywhere); ``donor_telegram_id`` exists
+    only to route the private confirm/reject message and is scrubbed the
+    instant a decision is made. This row is the audit trail of "a payment
+    was claimed and what became of it", not a permanent donor-to-donation
+    link — the resulting ``Donation`` never carries it, and the Super Admin
+    interface never surfaces the reference-code-to-donor mapping at all.
     """
 
-    provider_session_id: str
+    reference_code: str
     amount: Money
-    provider: str
     id: int | None = None
     donor_telegram_id: int | None = None
-    status: PaymentStatus = PaymentStatus.PENDING
+    receipt_file_id: str | None = None
+    status: PendingPaymentStatus = PendingPaymentStatus.PENDING
     donation_id: int | None = None
     created_at: datetime | None = None
-    confirmed_at: datetime | None = None
-    # Never persisted (no DB column): a checkout link only makes sense in the
-    # moment a provider issues it. Round-tripping through the repository
-    # (add/get/mark_paid/mark_cancelled) always yields None here.
-    pay_url: str | None = None
+    decided_at: datetime | None = None

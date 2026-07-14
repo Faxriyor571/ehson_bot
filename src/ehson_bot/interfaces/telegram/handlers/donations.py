@@ -1,11 +1,13 @@
 """Super-Admin-only financial management: record expenses, correct a
 mistaken donation/expense entry by deleting it.
 
-Donations are no longer recorded here — they arrive automatically through
-the payment flow (``handlers/payments.py``). Approved members (TREASURER)
-can only *view* recent entries (``handlers/reports.py``); recording,
-editing, and deleting is administrative and restricted to Super Admin, per
-the bot's permission model.
+Donations are no longer recorded here — a member submits a claim through
+``handlers/payments.py`` and a Super Admin manually verifies and confirms
+it via ``handlers/admin.py``'s pending-payments review screen. Approved
+members (TREASURER) can only *view* recent entries
+(``handlers/reports.py``); recording, editing, and deleting is
+administrative and restricted to Super Admin, per the bot's permission
+model.
 
 All multi-step input uses ReplyKeyboardMarkup + FSM (no slash commands) so
 every step offers Cancel (and Skip where the field is optional), per the

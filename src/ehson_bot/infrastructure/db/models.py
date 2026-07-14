@@ -15,7 +15,7 @@ from sqlalchemy import BigInteger, DateTime, ForeignKey, Numeric, String, func
 from sqlalchemy import Enum as SQLEnum
 from sqlalchemy.orm import Mapped, mapped_column
 
-from ehson_bot.domain.entities import PaymentStatus, Role
+from ehson_bot.domain.entities import PendingPaymentStatus, Role
 from ehson_bot.infrastructure.db.base import Base
 
 _RoleType = SQLEnum(
@@ -26,9 +26,9 @@ _RoleType = SQLEnum(
     length=20,
 )
 
-_PaymentStatusType = SQLEnum(
-    PaymentStatus,
-    name="payment_status",
+_PendingPaymentStatusType = SQLEnum(
+    PendingPaymentStatus,
+    name="pending_payment_status",
     values_callable=lambda enum_cls: [member.value for member in enum_cls],
     native_enum=False,
     length=20,
@@ -90,21 +90,23 @@ class BankAccountSettingsRow(Base):
     )
 
 
-class PaymentSessionRow(Base):
-    """One payment attempt. ``donor_telegram_id`` is nulled out by the
-    repository the moment the session leaves PENDING — see
-    ``PaymentSession`` in the domain layer for why.
+class PendingPaymentRow(Base):
+    """One donor-submitted payment claim, awaiting manual Super Admin
+    verification against the bank account. ``donor_telegram_id`` is nulled
+    out by the repository the instant a decision is made — see
+    ``PendingPayment`` in the domain layer for why. ``reference_code`` is
+    the only donor-facing identifier ever shown to the Super Admin.
     """
 
-    __tablename__ = "payment_sessions"
+    __tablename__ = "pending_payments"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    provider_session_id: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    reference_code: Mapped[str] = mapped_column(String(32), nullable=False, unique=True)
     amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
-    provider: Mapped[str] = mapped_column(String(50), nullable=False)
     donor_telegram_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    status: Mapped[PaymentStatus] = mapped_column(
-        _PaymentStatusType, nullable=False, default=PaymentStatus.PENDING
+    receipt_file_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    status: Mapped[PendingPaymentStatus] = mapped_column(
+        _PendingPaymentStatusType, nullable=False, default=PendingPaymentStatus.PENDING
     )
     donation_id: Mapped[int | None] = mapped_column(
         ForeignKey("donations.id"), nullable=True
@@ -112,4 +114,4 @@ class PaymentSessionRow(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
-    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

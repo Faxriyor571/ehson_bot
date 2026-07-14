@@ -12,7 +12,6 @@ from ehson_bot.domain.entities import Role
 from ehson_bot.infrastructure.config import settings
 from ehson_bot.infrastructure.db.repositories import SqlAlchemyBotUserRepository
 from ehson_bot.infrastructure.db.session import get_session
-from ehson_bot.infrastructure.payments.mock_provider import MockPaymentProvider
 from ehson_bot.infrastructure.scheduler import build_scheduler
 from ehson_bot.interfaces.telegram.handlers import (
     admin,
@@ -66,13 +65,12 @@ async def run() -> None:
     await _bootstrap_super_admins()
     bot = build_bot()
     dp = build_dispatcher()
-    payment_provider = MockPaymentProvider(bot)
 
     scheduler = build_scheduler(bot)
     scheduler.start()
 
     logger.info("Ehson bot ishga tushdi")
     try:
-        await dp.start_polling(bot, payment_provider=payment_provider)
+        await dp.start_polling(bot)
     finally:
         scheduler.shutdown(wait=False)
