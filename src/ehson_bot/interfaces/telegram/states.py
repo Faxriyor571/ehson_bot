@@ -4,17 +4,11 @@ from __future__ import annotations
 from aiogram.fsm.state import State, StatesGroup
 
 
-class ManageTreasurerStates(StatesGroup):
-    awaiting_id_to_add = State()
-    awaiting_id_to_remove = State()
-    confirming_add = State()
-    confirming_remove = State()
-
-
-class DonationEntryStates(StatesGroup):
-    awaiting_amount = State()
-    awaiting_note = State()
-    awaiting_confirm = State()
+class ManageMembersStates(StatesGroup):
+    awaiting_id_to_approve = State()
+    confirming_approve = State()
+    awaiting_id_to_revoke = State()
+    confirming_revoke = State()
 
 
 class ExpenseEntryStates(StatesGroup):
@@ -36,6 +30,8 @@ class BankAccountStates(StatesGroup):
     confirming = State()
 
 
-class ApproveUserStates(StatesGroup):
-    awaiting_id = State()
+class PaymentStates(StatesGroup):
+    choosing_amount = State()
+    awaiting_amount = State()
     confirming = State()
+    awaiting_payment = State()

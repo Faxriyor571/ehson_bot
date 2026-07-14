@@ -13,11 +13,14 @@ class Role(str, Enum):
     """A bot user's permission level. Ordered lowest to highest trust.
 
     PENDING is the default for anyone who has never been approved by a
-    Super Admin — they have no access at all until promoted to USER.
+    Super Admin — they have no access at all until approved. There is no
+    separate "regular member" tier: approving someone grants TREASURER
+    directly, since donation-taking no longer depends on role (the payment
+    provider's confirmation is what protects it) and every approved member
+    of this small, trusted group is also trusted to record expenses.
     """
 
     PENDING = "pending"
-    USER = "user"
     TREASURER = "treasurer"
     SUPER_ADMIN = "super_admin"
 
@@ -95,3 +98,40 @@ class BankAccountInfo:
     card_holder: str
     bank_name: str
     updated_at: datetime | None = None
+
+
+class PaymentStatus(str, Enum):
+    """Lifecycle of one payment attempt, tracked independently of whether
+    it ever becomes a ``Donation``."""
+
+    PENDING = "pending"
+    PAID = "paid"
+    CANCELLED = "cancelled"
+
+
+@dataclass(slots=True)
+class PaymentSession:
+    """One donor's attempt to pay through a provider (mock today, a real
+    gateway later) — the operational record of a payment, not the donation
+    itself.
+
+    ``donor_telegram_id`` exists only to know who to thank and to route the
+    confirmation message. It is a *transient* correlation: the moment this
+    session leaves PENDING, the caller must clear it — this row is the
+    audit trail of "a payment happened and what it became", not a permanent
+    donor-to-donation link. The resulting ``Donation`` never carries it.
+    """
+
+    provider_session_id: str
+    amount: Money
+    provider: str
+    id: int | None = None
+    donor_telegram_id: int | None = None
+    status: PaymentStatus = PaymentStatus.PENDING
+    donation_id: int | None = None
+    created_at: datetime | None = None
+    confirmed_at: datetime | None = None
+    # Never persisted (no DB column): a checkout link only makes sense in the
+    # moment a provider issues it. Round-tripping through the repository
+    # (add/get/mark_paid/mark_cancelled) always yields None here.
+    pay_url: str | None = None

@@ -36,6 +36,13 @@ class Settings(BaseSettings):
     postgres_port: int = Field(default=5432)
     postgres_db: str = Field(default="ehson_db")
 
+    # MockPaymentProvider only: a placeholder checkout link shown on the
+    # "Pay Now" button. Never called over HTTP -- the mock confirms itself
+    # on a timer instead of waiting for a click. Replaced entirely once a
+    # real provider (Click/Payme) is integrated.
+    mock_payment_base_url: str = Field(default="https://mock-pay.ehson.local")
+    mock_payment_confirm_delay_seconds: int = Field(default=10)
+
     @property
     def super_admin_id_list(self) -> list[int]:
         return [

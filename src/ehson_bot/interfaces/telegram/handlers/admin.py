@@ -1,4 +1,13 @@
-"""Super Admin: grant/revoke the Treasurer role.
+"""Super Admin: approve pending members and grant/revoke access.
+
+TREASURER is the only non-admin approved role (there is no separate
+donor-only tier) — this is a small, trusted group where every approved
+member is also trusted to record expenses. Approving and revoking access
+are one merged "Manage Members" screen rather than two separate ones,
+since both are really the same underlying action: is this Telegram ID
+allowed to use the bot or not. Revoking access has no lower "approved but
+view-only" tier to fall back to, so it fully locks the person out again
+(back to PENDING), the same as if they'd never been approved.
 
 Telegram's Bot API has no way to look a user up by @username unless that
 user has messaged the bot, so role changes are keyed on the numeric
@@ -12,82 +21,89 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ehson_bot.domain.entities import Role
+from ehson_bot.domain.entities import BotUser, Role
 from ehson_bot.infrastructure.db.repositories import (
     SqlAlchemyBankAccountRepository,
     SqlAlchemyBotUserRepository,
 )
-from ehson_bot.interfaces.telegram.common import show_main_menu
+from ehson_bot.interfaces.telegram.common import esc, show_main_menu
 from ehson_bot.interfaces.telegram.filters import IsSuperAdmin
 from ehson_bot.interfaces.telegram.keyboards import (
-    BTN_ADD_TREASURER,
-    BTN_APPROVE_BY_ID,
-    BTN_APPROVE_USERS,
+    BTN_APPROVE_MEMBER,
     BTN_CANCEL,
     BTN_CONFIRM,
     BTN_EDIT_BANK_ACCOUNT,
-    BTN_MANAGE_TREASURERS,
-    BTN_REMOVE_TREASURER,
+    BTN_MANAGE_MEMBERS,
+    BTN_REVOKE_ACCESS,
     BTN_SETTINGS,
-    approve_users_menu,
     cancel_only,
     confirm_cancel,
-    manage_treasurers_menu,
+    manage_members_menu,
     settings_menu,
 )
-from ehson_bot.interfaces.telegram.states import (
-    ApproveUserStates,
-    BankAccountStates,
-    ManageTreasurerStates,
-)
+from ehson_bot.interfaces.telegram.states import BankAccountStates, ManageMembersStates
 
 router = Router(name="admin")
 router.message.filter(IsSuperAdmin())
 
 
-@router.message(F.text == BTN_MANAGE_TREASURERS)
-async def open_manage_treasurers(message: Message, session: AsyncSession) -> None:
-    treasurers = await SqlAlchemyBotUserRepository(session).list_by_role(Role.TREASURER)
-    if treasurers:
-        listing = "\n".join(
-            f"• {t.display_name or 'Noma\'lum'} — ID: {t.telegram_id}" for t in treasurers
-        )
-    else:
-        listing = "Hozircha xazinachilar yo'q."
-    await message.answer(f"<b>Xazinachilar:</b>\n{listing}", reply_markup=manage_treasurers_menu())
+_UNKNOWN_NAME = "Noma'lum"
 
 
-@router.message(F.text == BTN_ADD_TREASURER)
-async def ask_id_to_add(message: Message, state: FSMContext) -> None:
-    await state.set_state(ManageTreasurerStates.awaiting_id_to_add)
+def _member_listing(users: list[BotUser]) -> str:
+    if not users:
+        return "— yo'q"
+    return "\n".join(
+        f"• {esc(u.display_name) if u.display_name else _UNKNOWN_NAME} — ID: {u.telegram_id}"
+        for u in users
+    )
+
+
+@router.message(F.text == BTN_MANAGE_MEMBERS)
+async def open_manage_members(message: Message, session: AsyncSession) -> None:
+    repo = SqlAlchemyBotUserRepository(session)
+    pending = await repo.list_by_role(Role.PENDING)
+    approved = await repo.list_by_role(Role.TREASURER)
     await message.answer(
-        "Xazinachi etib tayinlanadigan foydalanuvchining Telegram ID raqamini yuboring "
-        "(u avval botga /start bosgan bo'lishi kerak).",
+        "<b>A'zolarni boshqarish</b>\n\n"
+        f"⏳ Tasdiq kutmoqda:\n{_member_listing(pending)}\n\n"
+        f"✅ Tasdiqlangan a'zolar:\n{_member_listing(approved)}",
+        reply_markup=manage_members_menu(),
+    )
+
+
+@router.message(F.text == BTN_APPROVE_MEMBER)
+async def ask_id_to_approve(message: Message, state: FSMContext) -> None:
+    await state.set_state(ManageMembersStates.awaiting_id_to_approve)
+    await message.answer(
+        "Tasdiqlanadigan a'zoning Telegram ID raqamini yuboring.",
         reply_markup=cancel_only(),
     )
 
 
-@router.message(F.text == BTN_REMOVE_TREASURER)
-async def ask_id_to_remove(message: Message, state: FSMContext) -> None:
-    await state.set_state(ManageTreasurerStates.awaiting_id_to_remove)
+@router.message(F.text == BTN_REVOKE_ACCESS)
+async def ask_id_to_revoke(message: Message, state: FSMContext) -> None:
+    await state.set_state(ManageMembersStates.awaiting_id_to_revoke)
     await message.answer(
-        "Xazinachilikdan chetlatiladigan Telegram ID raqamini yuboring.",
+        "Kirishi bekor qilinadigan a'zoning Telegram ID raqamini yuboring.",
         reply_markup=cancel_only(),
     )
 
 
-@router.message(ManageTreasurerStates.awaiting_id_to_add, F.text == BTN_CANCEL)
-@router.message(ManageTreasurerStates.awaiting_id_to_remove, F.text == BTN_CANCEL)
-@router.message(ManageTreasurerStates.confirming_add, F.text == BTN_CANCEL)
-@router.message(ManageTreasurerStates.confirming_remove, F.text == BTN_CANCEL)
-async def cancel_role_change(message: Message, state: FSMContext, session: AsyncSession) -> None:
+@router.message(ManageMembersStates.awaiting_id_to_approve, F.text == BTN_CANCEL)
+@router.message(ManageMembersStates.awaiting_id_to_revoke, F.text == BTN_CANCEL)
+@router.message(ManageMembersStates.confirming_approve, F.text == BTN_CANCEL)
+@router.message(ManageMembersStates.confirming_revoke, F.text == BTN_CANCEL)
+async def cancel_member_management(
+    message: Message, state: FSMContext, session: AsyncSession
+) -> None:
     await state.clear()
     await message.answer("Bekor qilindi.")
     await show_main_menu(message, session)
 
 
-@router.message(ManageTreasurerStates.awaiting_id_to_add)
-async def ask_confirm_add_treasurer(
+@router.message(ManageMembersStates.awaiting_id_to_approve)
+async def ask_confirm_approve_member(
     message: Message, state: FSMContext, session: AsyncSession
 ) -> None:
     if not message.text or not message.text.strip().isdigit():
@@ -96,34 +112,36 @@ async def ask_confirm_add_treasurer(
 
     telegram_id = int(message.text.strip())
     user = await SqlAlchemyBotUserRepository(session).get(telegram_id)
-    if user is None:
+    if user is None or user.role is not Role.PENDING:
         await message.answer(
-            "Bu ID topilmadi. Avval o'sha shaxs botda /start bosishi kerak, "
-            "so'ng qayta urinib ko'ring."
+            "Bu ID tasdiq kutayotganlar ro'yxatida topilmadi. Eslatma: shaxs "
+            "avval botda /start bosgan bo'lishi kerak."
         )
         return
 
     await state.update_data(telegram_id=telegram_id)
-    await state.set_state(ManageTreasurerStates.confirming_add)
-    label = user.display_name or str(telegram_id)
+    await state.set_state(ManageMembersStates.confirming_approve)
+    label = esc(user.display_name) if user.display_name else str(telegram_id)
     await message.answer(
-        f"Tasdiqlaysizmi?\n{label} (ID: {telegram_id}) endi xazinachi bo'ladi.",
+        f"Tasdiqlaysizmi?\n{label} (ID: {telegram_id}) botdan foydalanishga ruxsat oladi.",
         reply_markup=confirm_cancel(),
     )
 
 
-@router.message(ManageTreasurerStates.confirming_add, F.text == BTN_CONFIRM)
-async def confirm_add_treasurer(message: Message, state: FSMContext, session: AsyncSession) -> None:
+@router.message(ManageMembersStates.confirming_approve, F.text == BTN_CONFIRM)
+async def confirm_approve_member(
+    message: Message, state: FSMContext, session: AsyncSession
+) -> None:
     data = await state.get_data()
     telegram_id = data["telegram_id"]
     await SqlAlchemyBotUserRepository(session).set_role(telegram_id, Role.TREASURER)
     await state.clear()
-    await message.answer(f"✅ {telegram_id} endi xazinachi.")
+    await message.answer(f"✅ {telegram_id} endi botdan foydalanishi mumkin.")
     await show_main_menu(message, session)
 
 
-@router.message(ManageTreasurerStates.awaiting_id_to_remove)
-async def ask_confirm_remove_treasurer(
+@router.message(ManageMembersStates.awaiting_id_to_revoke)
+async def ask_confirm_revoke_access(
     message: Message, state: FSMContext, session: AsyncSession
 ) -> None:
     if not message.text or not message.text.strip().isdigit():
@@ -133,27 +151,28 @@ async def ask_confirm_remove_treasurer(
     telegram_id = int(message.text.strip())
     user = await SqlAlchemyBotUserRepository(session).get(telegram_id)
     if user is None or user.role is not Role.TREASURER:
-        await message.answer("Bu ID xazinachilar ro'yxatida topilmadi.")
+        await message.answer("Bu ID tasdiqlangan a'zolar ro'yxatida topilmadi.")
         return
 
     await state.update_data(telegram_id=telegram_id)
-    await state.set_state(ManageTreasurerStates.confirming_remove)
-    label = user.display_name or str(telegram_id)
+    await state.set_state(ManageMembersStates.confirming_revoke)
+    label = esc(user.display_name) if user.display_name else str(telegram_id)
     await message.answer(
-        f"Tasdiqlaysizmi?\n{label} (ID: {telegram_id}) xazinachilikdan chetlatiladi.",
+        f"Tasdiqlaysizmi?\n{label} (ID: {telegram_id}) botdan foydalanish huquqidan butunlay "
+        "mahrum qilinadi (qayta tasdiqlash kerak bo'ladi).",
         reply_markup=confirm_cancel(),
     )
 
 
-@router.message(ManageTreasurerStates.confirming_remove, F.text == BTN_CONFIRM)
-async def confirm_remove_treasurer(
-    message: Message, state: FSMContext, session: AsyncSession
-) -> None:
+@router.message(ManageMembersStates.confirming_revoke, F.text == BTN_CONFIRM)
+async def confirm_revoke_access(message: Message, state: FSMContext, session: AsyncSession) -> None:
     data = await state.get_data()
     telegram_id = data["telegram_id"]
-    await SqlAlchemyBotUserRepository(session).set_role(telegram_id, Role.USER)
+    # No lower "approved but view-only" tier exists to fall back to, so this
+    # is a full lockout, not a demotion.
+    await SqlAlchemyBotUserRepository(session).set_role(telegram_id, Role.PENDING)
     await state.clear()
-    await message.answer(f"✅ {telegram_id} xazinachilikdan chetlatildi.")
+    await message.answer(f"✅ {telegram_id} botdan foydalanish huquqidan mahrum qilindi.")
     await show_main_menu(message, session)
 
 
@@ -165,9 +184,9 @@ async def confirm_remove_treasurer(
 
 def _account_summary(card_number: str, card_holder: str, bank_name: str) -> str:
     return (
-        f"💳 Karta raqami: {card_number}\n"
-        f"👤 Karta egasi: {card_holder}\n"
-        f"🏦 Bank: {bank_name}"
+        f"💳 Karta raqami: <code>{esc(card_number)}</code>\n"
+        f"👤 Karta egasi: {esc(card_holder)}\n"
+        f"🏦 Bank: {esc(bank_name)}"
     )
 
 
@@ -250,73 +269,4 @@ async def confirm_bank_account(message: Message, state: FSMContext, session: Asy
     )
     await state.clear()
     await message.answer("✅ Hisob raqami yangilandi.")
-    await show_main_menu(message, session)
-
-
-# --------------------------------------------------------------------------
-# Approve pending users: grant baseline (USER) access
-# --------------------------------------------------------------------------
-
-
-@router.message(F.text == BTN_APPROVE_USERS)
-async def open_approve_users(message: Message, session: AsyncSession) -> None:
-    pending = await SqlAlchemyBotUserRepository(session).list_by_role(Role.PENDING)
-    if pending:
-        listing = "\n".join(
-            f"• {u.display_name or 'Noma\'lum'} — ID: {u.telegram_id}" for u in pending
-        )
-    else:
-        listing = "Hozircha tasdiq kutayotgan foydalanuvchilar yo'q."
-    await message.answer(
-        f"<b>Tasdiq kutayotganlar:</b>\n{listing}", reply_markup=approve_users_menu()
-    )
-
-
-@router.message(F.text == BTN_APPROVE_BY_ID)
-async def ask_id_to_approve(message: Message, state: FSMContext) -> None:
-    await state.set_state(ApproveUserStates.awaiting_id)
-    await message.answer(
-        "Tasdiqlanadigan foydalanuvchining Telegram ID raqamini yuboring.",
-        reply_markup=cancel_only(),
-    )
-
-
-@router.message(ApproveUserStates.awaiting_id, F.text == BTN_CANCEL)
-@router.message(ApproveUserStates.confirming, F.text == BTN_CANCEL)
-async def cancel_approve_user(message: Message, state: FSMContext, session: AsyncSession) -> None:
-    await state.clear()
-    await message.answer("Bekor qilindi.")
-    await show_main_menu(message, session)
-
-
-@router.message(ApproveUserStates.awaiting_id)
-async def ask_confirm_approve_user(
-    message: Message, state: FSMContext, session: AsyncSession
-) -> None:
-    if not message.text or not message.text.strip().isdigit():
-        await message.answer("Iltimos, faqat raqamlardan iborat Telegram ID yuboring.")
-        return
-
-    telegram_id = int(message.text.strip())
-    user = await SqlAlchemyBotUserRepository(session).get(telegram_id)
-    if user is None or user.role is not Role.PENDING:
-        await message.answer("Bu ID tasdiq kutayotganlar ro'yxatida topilmadi.")
-        return
-
-    await state.update_data(telegram_id=telegram_id)
-    await state.set_state(ApproveUserStates.confirming)
-    label = user.display_name or str(telegram_id)
-    await message.answer(
-        f"Tasdiqlaysizmi?\n{label} (ID: {telegram_id}) botdan foydalanishga ruxsat oladi.",
-        reply_markup=confirm_cancel(),
-    )
-
-
-@router.message(ApproveUserStates.confirming, F.text == BTN_CONFIRM)
-async def confirm_approve_user(message: Message, state: FSMContext, session: AsyncSession) -> None:
-    data = await state.get_data()
-    telegram_id = data["telegram_id"]
-    await SqlAlchemyBotUserRepository(session).set_role(telegram_id, Role.USER)
-    await state.clear()
-    await message.answer(f"✅ {telegram_id} endi botdan foydalanishi mumkin.")
     await show_main_menu(message, session)

@@ -9,7 +9,14 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Protocol
 
-from ehson_bot.domain.entities import BankAccountInfo, BotUser, Donation, Expense, Role
+from ehson_bot.domain.entities import (
+    BankAccountInfo,
+    BotUser,
+    Donation,
+    Expense,
+    PaymentSession,
+    Role,
+)
 
 
 class DonationRepository(Protocol):
@@ -77,8 +84,8 @@ class BotUserRepository(Protocol):
         """Register a user on first contact, or refresh their display name.
 
         A newly-registered user gets ``Role.PENDING`` — never changes an
-        existing user's role, and never grants USER or above by itself.
-        Role changes only happen via ``set_role``.
+        existing user's role, and never grants any role above PENDING by
+        itself. Role changes only happen via ``set_role``.
         """
         ...
 
@@ -101,3 +108,46 @@ class BankAccountRepository(Protocol):
         ...
 
     async def set(self, card_number: str, card_holder: str, bank_name: str) -> BankAccountInfo: ...
+
+
+class PaymentSessionRepository(Protocol):
+    """Persistence port for payment attempts — the operational record of a
+    payment, kept separate from the anonymous ``Donation`` it may produce.
+    """
+
+    async def add(self, session: PaymentSession) -> PaymentSession:
+        """Persist a new PENDING session and return it with id populated."""
+        ...
+
+    async def get(self, provider_session_id: str) -> PaymentSession | None: ...
+
+    async def mark_paid(self, provider_session_id: str, donation_id: int) -> PaymentSession | None:
+        """Transition PENDING -> PAID, link the resulting donation, and scrub
+        ``donor_telegram_id`` — the correlation has served its purpose.
+        Returns None if no such session exists.
+        """
+        ...
+
+    async def mark_cancelled(self, provider_session_id: str) -> PaymentSession | None:
+        """Transition PENDING -> CANCELLED. Returns None if no such session exists."""
+        ...
+
+
+class PaymentProvider(Protocol):
+    """A payment gateway adapter. ``MockPaymentProvider`` is the only
+    implementation for now; a real provider (Click/Payme) will also need
+    webhook-signature verification, which is an HTTP-layer concern added
+    alongside that real integration, not speculatively defined here first.
+    """
+
+    display_name: str
+    """Human-readable label shown on the donor-facing confirmation screen
+    before a session is created (e.g. "Click", "Payme") — never the raw
+    provider identifier stored on ``PaymentSession.provider``.
+    """
+
+    async def create_payment(self, amount: Decimal, donor_telegram_id: int) -> PaymentSession:
+        """Start a payment attempt and return the PENDING session, including
+        wherever the caller should send the donor to pay.
+        """
+        ...

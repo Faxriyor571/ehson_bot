@@ -3,7 +3,12 @@ role-to-button mapping lives in one place instead of scattered across handlers.
 """
 from __future__ import annotations
 
-from aiogram.types import KeyboardButton, ReplyKeyboardMarkup
+from aiogram.types import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    KeyboardButton,
+    ReplyKeyboardMarkup,
+)
 
 from ehson_bot.domain.entities import Role
 
@@ -12,17 +17,22 @@ BTN_BALANCE = "💰 Balans"
 BTN_ACCOUNT = "🤲 Ehson qilish"
 BTN_HELP = "ℹ️ Yordam"
 
-BTN_ADD_DONATION = "➕ Ehson qo'shish"
+BTN_PAY_NOW = "💳 To'lash"
+
+BTN_AMOUNT_50K = "50 000 so'm"
+BTN_AMOUNT_100K = "100 000 so'm"
+BTN_AMOUNT_200K = "200 000 so'm"
+BTN_AMOUNT_500K = "500 000 so'm"
+BTN_OTHER_AMOUNT = "✍️ Boshqa summa"
+
 BTN_ADD_EXPENSE = "➖ Xarajat qo'shish"
 BTN_RECENT = "📋 Oxirgi yozuvlar"
 
-BTN_MANAGE_TREASURERS = "👥 Xazinachilarni boshqarish"
+BTN_MANAGE_MEMBERS = "👥 A'zolarni boshqarish"
 BTN_SETTINGS = "⚙️ Sozlamalar"
-BTN_APPROVE_USERS = "✅ Foydalanuvchilarni tasdiqlash"
 
-BTN_ADD_TREASURER = "➕ Xazinachi qo'shish"
-BTN_REMOVE_TREASURER = "➖ Xazinachi o'chirish"
-BTN_APPROVE_BY_ID = "☑️ ID orqali tasdiqlash"
+BTN_APPROVE_MEMBER = "✅ A'zoni tasdiqlash"
+BTN_REVOKE_ACCESS = "🚫 Kirishni bekor qilish"
 
 BTN_USAGE_HISTORY = "📜 Foydalanish tarixi"
 
@@ -45,8 +55,8 @@ def main_menu(role: Role) -> ReplyKeyboardMarkup:
     """The persistent bottom menu, scoped to what this role may do."""
     rows: list[list[KeyboardButton]] = []
 
-    if role in (Role.TREASURER, Role.SUPER_ADMIN):
-        rows.append([KeyboardButton(text=BTN_ADD_DONATION), KeyboardButton(text=BTN_ADD_EXPENSE)])
+    if role is Role.SUPER_ADMIN:
+        rows.append([KeyboardButton(text=BTN_ADD_EXPENSE)])
 
     rows.append([KeyboardButton(text=BTN_STATS), KeyboardButton(text=BTN_BALANCE)])
     rows.append([KeyboardButton(text=BTN_ACCOUNT), KeyboardButton(text=BTN_HELP)])
@@ -56,8 +66,7 @@ def main_menu(role: Role) -> ReplyKeyboardMarkup:
         rows.append([KeyboardButton(text=BTN_RECENT)])
 
     if role is Role.SUPER_ADMIN:
-        rows.append([KeyboardButton(text=BTN_MANAGE_TREASURERS), KeyboardButton(text=BTN_SETTINGS)])
-        rows.append([KeyboardButton(text=BTN_APPROVE_USERS)])
+        rows.append([KeyboardButton(text=BTN_MANAGE_MEMBERS), KeyboardButton(text=BTN_SETTINGS)])
 
     return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
 
@@ -80,10 +89,22 @@ def skip_or_cancel() -> ReplyKeyboardMarkup:
     )
 
 
-def manage_treasurers_menu() -> ReplyKeyboardMarkup:
+def amount_choice_menu() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text=BTN_ADD_TREASURER), KeyboardButton(text=BTN_REMOVE_TREASURER)],
+            [KeyboardButton(text=BTN_AMOUNT_50K), KeyboardButton(text=BTN_AMOUNT_100K)],
+            [KeyboardButton(text=BTN_AMOUNT_200K), KeyboardButton(text=BTN_AMOUNT_500K)],
+            [KeyboardButton(text=BTN_OTHER_AMOUNT)],
+            [KeyboardButton(text=BTN_CANCEL)],
+        ],
+        resize_keyboard=True,
+    )
+
+
+def manage_members_menu() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=BTN_APPROVE_MEMBER), KeyboardButton(text=BTN_REVOKE_ACCESS)],
             [KeyboardButton(text=BTN_BACK)],
         ],
         resize_keyboard=True,
@@ -101,11 +122,13 @@ def stats_menu() -> ReplyKeyboardMarkup:
     )
 
 
-def recent_entries_menu() -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text=BTN_DELETE_ENTRY)], [KeyboardButton(text=BTN_BACK)]],
-        resize_keyboard=True,
-    )
+def recent_entries_menu(can_delete: bool = False) -> ReplyKeyboardMarkup:
+    """``can_delete`` gates the delete affordance: approved members (Treasurer)
+    can view recent entries, but only Super Admin may act on them.
+    """
+    rows = [[KeyboardButton(text=BTN_DELETE_ENTRY)]] if can_delete else []
+    rows.append([KeyboardButton(text=BTN_BACK)])
+    return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
 
 
 def settings_menu() -> ReplyKeyboardMarkup:
@@ -115,8 +138,11 @@ def settings_menu() -> ReplyKeyboardMarkup:
     )
 
 
-def approve_users_menu() -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text=BTN_APPROVE_BY_ID)], [KeyboardButton(text=BTN_BACK)]],
-        resize_keyboard=True,
+def pay_now_keyboard(pay_url: str) -> InlineKeyboardMarkup:
+    """A deliberate, necessary exception to the "ReplyKeyboardMarkup only"
+    rule: opening an external URL requires an inline button, reply keyboards
+    cannot do it.
+    """
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text=BTN_PAY_NOW, url=pay_url)]]
     )

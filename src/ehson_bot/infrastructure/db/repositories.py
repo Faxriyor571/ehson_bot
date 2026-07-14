@@ -7,13 +7,23 @@ from decimal import Decimal
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ehson_bot.domain.entities import BankAccountInfo, BotUser, Donation, Expense, Role, TreasurerId
+from ehson_bot.domain.entities import (
+    BankAccountInfo,
+    BotUser,
+    Donation,
+    Expense,
+    PaymentSession,
+    PaymentStatus,
+    Role,
+    TreasurerId,
+)
 from ehson_bot.domain.value_objects import Money
 from ehson_bot.infrastructure.db.models import (
     BankAccountSettingsRow,
     BotUserRow,
     DonationRow,
     ExpenseRow,
+    PaymentSessionRow,
 )
 
 _BANK_ACCOUNT_ROW_ID = 1
@@ -37,6 +47,20 @@ def _expense_to_domain(row: ExpenseRow) -> Expense:
         recorded_by=TreasurerId(row.recorded_by_id),
         receipt_file_id=row.receipt_file_id,
         created_at=row.created_at,
+    )
+
+
+def _payment_session_to_domain(row: PaymentSessionRow) -> PaymentSession:
+    return PaymentSession(
+        id=row.id,
+        provider_session_id=row.provider_session_id,
+        amount=Money(row.amount),
+        provider=row.provider,
+        donor_telegram_id=row.donor_telegram_id,
+        status=PaymentStatus(row.status),
+        donation_id=row.donation_id,
+        created_at=row.created_at,
+        confirmed_at=row.confirmed_at,
     )
 
 
@@ -243,3 +267,57 @@ class SqlAlchemyBankAccountRepository:
             bank_name=row.bank_name,
             updated_at=row.updated_at,
         )
+
+
+class SqlAlchemyPaymentSessionRepository:
+    """Satisfies ``PaymentSessionRepository`` structurally (via ``Protocol``)."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def add(self, session: PaymentSession) -> PaymentSession:
+        row = PaymentSessionRow(
+            provider_session_id=session.provider_session_id,
+            amount=session.amount.amount,
+            provider=session.provider,
+            donor_telegram_id=session.donor_telegram_id,
+            status=session.status,
+        )
+        self._session.add(row)
+        await self._session.commit()
+        await self._session.refresh(row)
+        return _payment_session_to_domain(row)
+
+    async def get(self, provider_session_id: str) -> PaymentSession | None:
+        stmt = select(PaymentSessionRow).where(
+            PaymentSessionRow.provider_session_id == provider_session_id
+        )
+        row = (await self._session.execute(stmt)).scalar_one_or_none()
+        return _payment_session_to_domain(row) if row is not None else None
+
+    async def mark_paid(self, provider_session_id: str, donation_id: int) -> PaymentSession | None:
+        stmt = select(PaymentSessionRow).where(
+            PaymentSessionRow.provider_session_id == provider_session_id
+        )
+        row = (await self._session.execute(stmt)).scalar_one_or_none()
+        if row is None:
+            return None
+        row.status = PaymentStatus.PAID
+        row.donation_id = donation_id
+        row.donor_telegram_id = None
+        row.confirmed_at = func.now()
+        await self._session.commit()
+        await self._session.refresh(row)
+        return _payment_session_to_domain(row)
+
+    async def mark_cancelled(self, provider_session_id: str) -> PaymentSession | None:
+        stmt = select(PaymentSessionRow).where(
+            PaymentSessionRow.provider_session_id == provider_session_id
+        )
+        row = (await self._session.execute(stmt)).scalar_one_or_none()
+        if row is None:
+            return None
+        row.status = PaymentStatus.CANCELLED
+        await self._session.commit()
+        await self._session.refresh(row)
+        return _payment_session_to_domain(row)

@@ -48,6 +48,19 @@ def test_format_daily_report_handles_no_expenses() -> None:
     assert "bugun sarf bo'lmagan" in text
 
 
+def test_format_daily_report_escapes_html_in_descriptions() -> None:
+    """The report is sent with HTML parse mode -- an unescaped ``&``/``<`` in
+    a free-text expense description would otherwise break delivery to every
+    recipient, every night.
+    """
+    snapshot = PoolSnapshot(donations_total=Decimal(0), expenses_total=Decimal(50000))
+
+    text = format_daily_report(snapshot, Decimal(0), ["Elektr & suv <asosiy>"])
+
+    assert "Elektr &amp; suv &lt;asosiy&gt;" in text
+    assert "Elektr & suv <asosiy>" not in text
+
+
 class FakeBot:
     def __init__(self, blocked_ids: set[int]) -> None:
         self.blocked_ids = blocked_ids

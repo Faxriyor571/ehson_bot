@@ -11,16 +11,24 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import BigInteger, DateTime, Numeric, String, func
+from sqlalchemy import BigInteger, DateTime, ForeignKey, Numeric, String, func
 from sqlalchemy import Enum as SQLEnum
 from sqlalchemy.orm import Mapped, mapped_column
 
-from ehson_bot.domain.entities import Role
+from ehson_bot.domain.entities import PaymentStatus, Role
 from ehson_bot.infrastructure.db.base import Base
 
 _RoleType = SQLEnum(
     Role,
     name="role",
+    values_callable=lambda enum_cls: [member.value for member in enum_cls],
+    native_enum=False,
+    length=20,
+)
+
+_PaymentStatusType = SQLEnum(
+    PaymentStatus,
+    name="payment_status",
     values_callable=lambda enum_cls: [member.value for member in enum_cls],
     native_enum=False,
     length=20,
@@ -80,3 +88,28 @@ class BankAccountSettingsRow(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
+
+
+class PaymentSessionRow(Base):
+    """One payment attempt. ``donor_telegram_id`` is nulled out by the
+    repository the moment the session leaves PENDING — see
+    ``PaymentSession`` in the domain layer for why.
+    """
+
+    __tablename__ = "payment_sessions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    provider_session_id: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
+    provider: Mapped[str] = mapped_column(String(50), nullable=False)
+    donor_telegram_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    status: Mapped[PaymentStatus] = mapped_column(
+        _PaymentStatusType, nullable=False, default=PaymentStatus.PENDING
+    )
+    donation_id: Mapped[int | None] = mapped_column(
+        ForeignKey("donations.id"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

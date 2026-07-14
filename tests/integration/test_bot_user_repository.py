@@ -68,13 +68,11 @@ async def test_list_approved_excludes_pending_and_includes_everyone_else(
 ) -> None:
     repo = SqlAlchemyBotUserRepository(session)
     await repo.upsert(telegram_id=1, display_name="Pending")
-    await repo.upsert(telegram_id=2, display_name="User")
-    await repo.set_role(2, Role.USER)
-    await repo.upsert(telegram_id=3, display_name="Treasurer")
-    await repo.set_role(3, Role.TREASURER)
-    await repo.upsert(telegram_id=4, display_name="Admin")
-    await repo.set_role(4, Role.SUPER_ADMIN)
+    await repo.upsert(telegram_id=2, display_name="Treasurer")
+    await repo.set_role(2, Role.TREASURER)
+    await repo.upsert(telegram_id=3, display_name="Admin")
+    await repo.set_role(3, Role.SUPER_ADMIN)
 
     approved = await repo.list_approved()
 
-    assert {u.telegram_id for u in approved} == {2, 3, 4}
+    assert {u.telegram_id for u in approved} == {2, 3}

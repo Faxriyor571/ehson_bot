@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ehson_bot.domain.entities import Role
 from ehson_bot.infrastructure.db.repositories import SqlAlchemyBotUserRepository
 
-_RANK = {Role.PENDING: 0, Role.USER: 1, Role.TREASURER: 2, Role.SUPER_ADMIN: 3}
+_RANK = {Role.PENDING: 0, Role.TREASURER: 1, Role.SUPER_ADMIN: 2}
 
 
 class HasRole(BaseFilter):
@@ -26,12 +26,11 @@ class HasRole(BaseFilter):
         return _RANK[user.role] >= _RANK[self.minimum]
 
 
-class IsUserOrAbove(HasRole):
-    def __init__(self) -> None:
-        super().__init__(Role.USER)
-
-
 class IsTreasurerOrAbove(HasRole):
+    """TREASURER is the lowest non-PENDING rank, so this doubles as "is this
+    caller an approved member at all" — there is no separate donor-only tier.
+    """
+
     def __init__(self) -> None:
         super().__init__(Role.TREASURER)
 

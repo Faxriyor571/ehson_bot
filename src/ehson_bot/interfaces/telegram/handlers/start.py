@@ -1,7 +1,8 @@
 """/start and /help — every caller is registered, but starts PENDING (no access).
 
-A Super Admin must approve a PENDING user (promoting them to USER) before
-they can see anything at all — no statistics, no balance, no menu.
+A Super Admin must approve a PENDING user (promoting them to TREASURER, the
+only non-admin approved role) before they can see anything at all — no
+statistics, no balance, no menu.
 """
 from __future__ import annotations
 
@@ -16,10 +17,14 @@ from ehson_bot.interfaces.telegram.keyboards import main_menu
 
 router = Router(name="start")
 
-LOCKOUT_TEXT = (
-    "🔒 Siz hali ushbu botdan foydalanish uchun ruxsat olmagansiz.\n\n"
-    "Iltimos, administrator bilan bog'laning."
-)
+
+def lockout_text(telegram_id: int) -> str:
+    return (
+        "🔒 Siz hali ushbu botdan foydalanish uchun ruxsat olmagansiz.\n\n"
+        "Iltimos, administratorga murojaat qiling va unga quyidagi Telegram ID "
+        "raqamingizni yuboring, u orqali sizni tasdiqlaydi:\n"
+        f"<code>{telegram_id}</code>"
+    )
 
 
 def _daily_reflection() -> str:
@@ -41,14 +46,32 @@ def _welcome_text() -> str:
     )
 
 
-HELP_TEXT = (
-    "<b>Mahfiy Ehson boti — yordam</b>\n\n"
-    "📊 Statistika — bugungi/oylik/yillik hisobot\n"
-    "💰 Balans — joriy qoldiq\n"
-    "🏦 Hisob raqami — xayriya uchun bank hisobi\n\n"
-    "Har qanday amalni istalgan vaqtda “❌ Bekor qilish” bilan bekor "
-    "qilishingiz mumkin."
-)
+def help_text(role: Role) -> str:
+    """Mirrors ``keyboards.main_menu`` exactly — never mentions a button the
+    caller's role doesn't actually see.
+    """
+    lines = [
+        "<b>Mahfiy Ehson boti — yordam</b>\n",
+        "📊 Statistika — bugungi/oylik/yillik/umumiy hisobot",
+        "💰 Balans — joriy balans va bugungi harakat",
+        "🤲 Ehson qilish — ehson yuborish",
+        "📜 Foydalanish tarixi — mablag' qayerga sarflanganini ko'rish",
+        "📋 Oxirgi yozuvlar — so'nggi ehson va xarajatlar ro'yxati",
+    ]
+
+    if role is Role.SUPER_ADMIN:
+        lines += [
+            "\n<b>Boshqaruv</b>",
+            "➖ Xarajat qo'shish — yangi xarajatni qayd etish",
+            "👥 A'zolarni boshqarish — a'zolarni tasdiqlash yoki kirishini bekor qilish",
+            "⚙️ Sozlamalar — ehson hisob raqamini sozlash",
+        ]
+
+    lines.append(
+        "\nHar qanday amalni istalgan vaqtda “❌ Bekor qilish” bilan bekor "
+        "qilishingiz mumkin."
+    )
+    return "\n".join(lines)
 
 
 async def _register_caller(message: Message, session: AsyncSession) -> BotUser | None:
@@ -66,7 +89,7 @@ async def cmd_start(message: Message, session: AsyncSession) -> None:
     if user is None:
         return
     if user.role is Role.PENDING:
-        await message.answer(LOCKOUT_TEXT, reply_markup=ReplyKeyboardRemove())
+        await message.answer(lockout_text(user.telegram_id), reply_markup=ReplyKeyboardRemove())
         return
     await message.answer(_welcome_text(), reply_markup=main_menu(user.role))
 
@@ -77,9 +100,9 @@ async def cmd_help(message: Message, session: AsyncSession) -> None:
     if user is None:
         return
     if user.role is Role.PENDING:
-        await message.answer(LOCKOUT_TEXT, reply_markup=ReplyKeyboardRemove())
+        await message.answer(lockout_text(user.telegram_id), reply_markup=ReplyKeyboardRemove())
         return
-    await message.answer(HELP_TEXT, reply_markup=main_menu(user.role))
+    await message.answer(help_text(user.role), reply_markup=main_menu(user.role))
 
 
 async def role_of(session: AsyncSession, telegram_id: int) -> Role:

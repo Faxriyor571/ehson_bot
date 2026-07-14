@@ -12,8 +12,16 @@ from ehson_bot.domain.entities import Role
 from ehson_bot.infrastructure.config import settings
 from ehson_bot.infrastructure.db.repositories import SqlAlchemyBotUserRepository
 from ehson_bot.infrastructure.db.session import get_session
+from ehson_bot.infrastructure.payments.mock_provider import MockPaymentProvider
 from ehson_bot.infrastructure.scheduler import build_scheduler
-from ehson_bot.interfaces.telegram.handlers import admin, donations, fallback, reports, start
+from ehson_bot.interfaces.telegram.handlers import (
+    admin,
+    donations,
+    fallback,
+    payments,
+    reports,
+    start,
+)
 from ehson_bot.interfaces.telegram.middlewares import DbSessionMiddleware
 
 logger = logging.getLogger("ehson_bot")
@@ -29,6 +37,7 @@ def build_dispatcher() -> Dispatcher:
     dp.include_router(reports.router)
     dp.include_router(admin.router)
     dp.include_router(donations.router)
+    dp.include_router(payments.router)
     # Must stay last: catches anything no role-specific router matched.
     dp.include_router(fallback.router)
     return dp
@@ -57,12 +66,13 @@ async def run() -> None:
     await _bootstrap_super_admins()
     bot = build_bot()
     dp = build_dispatcher()
+    payment_provider = MockPaymentProvider(bot)
 
     scheduler = build_scheduler(bot)
     scheduler.start()
 
     logger.info("Ehson bot ishga tushdi")
     try:
-        await dp.start_polling(bot)
+        await dp.start_polling(bot, payment_provider=payment_provider)
     finally:
         scheduler.shutdown(wait=False)

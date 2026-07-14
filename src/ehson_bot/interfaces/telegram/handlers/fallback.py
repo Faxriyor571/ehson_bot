@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ehson_bot.domain.entities import Role
 from ehson_bot.infrastructure.db.repositories import SqlAlchemyBotUserRepository
 from ehson_bot.interfaces.telegram.common import show_main_menu
-from ehson_bot.interfaces.telegram.handlers.start import LOCKOUT_TEXT
+from ehson_bot.interfaces.telegram.handlers.start import lockout_text
 
 router = Router(name="fallback")
 
@@ -31,7 +31,7 @@ async def catch_all(message: Message, session: AsyncSession) -> None:
         display_name=message.from_user.full_name,
     )
     if user.role is Role.PENDING:
-        await message.answer(LOCKOUT_TEXT, reply_markup=ReplyKeyboardRemove())
+        await message.answer(lockout_text(user.telegram_id), reply_markup=ReplyKeyboardRemove())
         return
     # An approved user typed something no specific handler matched — just
     # redraw the main menu rather than staying silent.

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 from decimal import Decimal
+from html import escape as _html_escape
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramForbiddenError
@@ -33,9 +34,16 @@ def format_daily_report(
     """``today`` is the day's donations/expenses; ``current_balance`` is the
     all-time running balance — these are deliberately different periods
     (the daily total is not the running balance).
+
+    Descriptions are escaped: this message is sent with HTML parse mode, and
+    an unescaped ``&``/``<`` in a free-text description (e.g. "electricity &
+    water") would otherwise break delivery to every recipient, every night.
     """
     usage_lines = (
-        "\n".join(f"• {description}" for description in expense_descriptions)
+        "\n".join(
+            f"• {_html_escape(description, quote=False)}"
+            for description in expense_descriptions
+        )
         if expense_descriptions
         else "— bugun sarf bo'lmagan"
     )
