@@ -54,8 +54,7 @@ pip install -e ".[dev]"
 copy .env.example .env
 # Edit .env: BOT_TOKEN (from @BotFather), SUPER_ADMIN_IDS (Telegram numeric
 # user IDs to bootstrap as Super Admin, comma-separated — get your own from
-# @userinfobot), TIMEZONE (default Asia/Tashkent). PUBLIC_GROUP_CHAT_ID is
-# optional — leave unset to skip the public donation-announcement step.
+# @userinfobot), TIMEZONE (default Asia/Tashkent)
 
 docker compose up -d      # starts Postgres
 alembic upgrade head
@@ -108,9 +107,10 @@ Super Admin must never be able to tell who claimed it. The flow:
 4. Confirming calls `ConfirmPendingPaymentUseCase`, which creates the
    `Donation` (crediting `recorded_by` to the *confirming Super Admin's own*
    Telegram ID — a real person verified this one, so that field means what
-   it always meant), privately thanks the donor, and — if
-   `PUBLIC_GROUP_CHAT_ID` is configured — posts an anonymous announcement to
-   the public group. Rejecting notifies the donor privately instead.
+   it always meant) and privately thanks the donor. Rejecting notifies the
+   donor privately instead. The bot never posts anywhere but a private chat
+   with the donor or a Super Admin — there is no group/channel integration
+   anywhere in the project.
 
 With multiple Super Admins, two people can open the same reference code at
 once. `PendingPaymentRepository.try_claim` is a single atomic conditional

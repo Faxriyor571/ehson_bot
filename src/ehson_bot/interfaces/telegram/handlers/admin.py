@@ -33,17 +33,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ehson_bot.application.use_cases.confirm_pending_payment import (
     ConfirmPendingPaymentUseCase,
 )
-from ehson_bot.application.use_cases.get_period_report import GetPeriodReportUseCase, Period
 from ehson_bot.application.use_cases.reject_pending_payment import RejectPendingPaymentUseCase
 from ehson_bot.domain.entities import BotUser, PendingPaymentStatus, Role
 from ehson_bot.infrastructure.db.repositories import (
     SqlAlchemyBankAccountRepository,
     SqlAlchemyBotUserRepository,
     SqlAlchemyDonationRepository,
-    SqlAlchemyExpenseRepository,
     SqlAlchemyPendingPaymentRepository,
 )
-from ehson_bot.interfaces.telegram.common import esc, post_public_announcement, show_main_menu
+from ehson_bot.interfaces.telegram.common import esc, show_main_menu
 from ehson_bot.interfaces.telegram.filters import IsSuperAdmin
 from ehson_bot.interfaces.telegram.keyboards import (
     BTN_APPROVE_MEMBER,
@@ -322,22 +320,6 @@ def _donor_rejected_text() -> str:
     )
 
 
-def _donation_announcement_text(amount: str, total_donations: str, balance: str) -> str:
-    return (
-        "🤲 Yangi ehson qabul qilindi!\n\n"
-        "💚 Mahfiy ehson qiluvchi tomonidan yangi ehson qabul qilindi.\n\n"
-        f"💰 Ehson summasi:\n{amount}\n\n"
-        f"💵 Umumiy ehson:\n{total_donations}\n\n"
-        f"🏦 Joriy balans:\n{balance}\n\n"
-        "\"Ehson qiluvchilarning misoli bitta urug'ga o'xshaydi: u yetti "
-        "boshoq chiqaradi, har boshoqda yuztadan don bo'ladi. Alloh xohlagan "
-        "kishiga yanada ziyoda qiladi.\"\n\n"
-        "(Baqara surasi, 261-oyat)\n\n"
-        "Alloh ehson qilgan bandamizdan rozi bo'lsin va ehsonini qabul "
-        "qilsin. Omin. 🤲"
-    )
-
-
 @router.message(F.text == BTN_PENDING_PAYMENTS)
 async def open_pending_payments(message: Message, session: AsyncSession) -> None:
     pending = await SqlAlchemyPendingPaymentRepository(session).list_pending()
@@ -423,20 +405,6 @@ async def confirm_pending_payment(
             await bot.send_message(result.donor_telegram_id, _donor_confirmed_text(amount_text))
         except TelegramForbiddenError:
             logger.info("Could not notify donor for %s: bot was blocked", code)
-
-    # Computed after the donation has been committed above, so this always
-    # reflects the balance/total *including* the donation just confirmed.
-    snapshot = await GetPeriodReportUseCase(
-        SqlAlchemyDonationRepository(session), SqlAlchemyExpenseRepository(session)
-    ).execute(Period.ALL)
-    await post_public_announcement(
-        bot,
-        _donation_announcement_text(
-            amount_text,
-            total_donations=f"{snapshot.donations_total:,.0f} so'm",
-            balance=f"{snapshot.balance:,.0f} so'm",
-        ),
-    )
 
     await message.answer(f"✅ {code} tasdiqlandi. Ehson qayd etildi.")
     await show_main_menu(message, session)

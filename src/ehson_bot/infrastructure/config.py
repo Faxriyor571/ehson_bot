@@ -36,12 +36,6 @@ class Settings(BaseSettings):
     postgres_port: int = Field(default=5432)
     postgres_db: str = Field(default="ehson_db")
 
-    # Optional: a Telegram group chat to post an anonymous "new donation
-    # received" announcement to (step 9 of the manual payment flow). Posting
-    # is skipped silently if unset -- get the numeric id by adding the bot
-    # to the group and checking an update's chat.id (group ids are negative).
-    public_group_chat_id: int | None = Field(default=None)
-
     @property
     def super_admin_id_list(self) -> list[int]:
         return [

@@ -17,12 +17,11 @@ from __future__ import annotations
 
 from decimal import Decimal, InvalidOperation
 
-from aiogram import Bot, F, Router
+from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ehson_bot.application.use_cases.get_period_report import GetPeriodReportUseCase, Period
 from ehson_bot.application.use_cases.record_expense import RecordExpenseInput, RecordExpenseUseCase
 from ehson_bot.application.use_cases.remove_donation import RemoveDonationUseCase
 from ehson_bot.application.use_cases.remove_expense import RemoveExpenseUseCase
@@ -31,7 +30,7 @@ from ehson_bot.infrastructure.db.repositories import (
     SqlAlchemyDonationRepository,
     SqlAlchemyExpenseRepository,
 )
-from ehson_bot.interfaces.telegram.common import esc, post_public_announcement, show_main_menu
+from ehson_bot.interfaces.telegram.common import esc, show_main_menu
 from ehson_bot.interfaces.telegram.filters import IsSuperAdmin
 from ehson_bot.interfaces.telegram.keyboards import (
     BTN_ADD_EXPENSE,
@@ -137,21 +136,8 @@ async def expense_receipt_invalid(message: Message) -> None:
     await message.answer("Iltimos, chek rasmini yuboring yoki “O'tkazib yuborish”ni bosing.")
 
 
-def _expense_announcement_text(description: str, amount: str, balance: str) -> str:
-    return (
-        "📤 Mablag' sarflandi\n\n"
-        f"📌 Maqsad:\n{esc(description)}\n\n"
-        f"💰 Xarajat:\n{amount}\n\n"
-        f"🏦 Joriy balans:\n{balance}\n\n"
-        "🤲 Alloh ushbu mablag'ni ehson qilgan barcha insonlardan rozi "
-        "bo'lsin va bu ehsonlarni qabul qilsin. Omin."
-    )
-
-
 @router.message(ExpenseEntryStates.awaiting_confirm, F.text == BTN_CONFIRM)
-async def expense_confirmed(
-    message: Message, state: FSMContext, session: AsyncSession, bot: Bot
-) -> None:
+async def expense_confirmed(message: Message, state: FSMContext, session: AsyncSession) -> None:
     if message.from_user is None:
         return
     data = await state.get_data()
@@ -173,21 +159,6 @@ async def expense_confirmed(
 
     await state.clear()
     await message.answer(f"✅ Qayd etildi: {expense.amount} so'm\nKod: X{expense.id}")
-
-    # Computed after the expense has been committed above, so this always
-    # reflects the balance *after* the expense just recorded.
-    snapshot = await GetPeriodReportUseCase(
-        SqlAlchemyDonationRepository(session), SqlAlchemyExpenseRepository(session)
-    ).execute(Period.ALL)
-    await post_public_announcement(
-        bot,
-        _expense_announcement_text(
-            expense.description,
-            amount=f"{expense.amount} so'm",
-            balance=f"{snapshot.balance:,.0f} so'm",
-        ),
-    )
-
     await show_main_menu(message, session)
 
 
