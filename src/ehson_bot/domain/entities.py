@@ -84,7 +84,14 @@ class Expense:
 
 @dataclass(frozen=True, slots=True)
 class BankAccountInfo:
-    """The single, Super-Admin-managed donation account, shown to everyone."""
+    """The single, Super-Admin-managed donation account, shown to everyone.
 
-    text: str
+    Structured fields (not one free-text blob) so the display screen can
+    format each one consistently — e.g. the card number rendered as
+    tap-to-copy — instead of showing back whatever an admin once typed.
+    """
+
+    card_number: str
+    card_holder: str
+    bank_name: str
     updated_at: datetime | None = None

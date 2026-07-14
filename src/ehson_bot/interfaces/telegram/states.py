@@ -29,8 +29,10 @@ class RemoveEntryStates(StatesGroup):
     confirming = State()
 
 
-class SettingsStates(StatesGroup):
-    awaiting_bank_account_text = State()
+class BankAccountStates(StatesGroup):
+    awaiting_card_number = State()
+    awaiting_card_holder = State()
+    awaiting_bank_name = State()
     confirming = State()
 
 

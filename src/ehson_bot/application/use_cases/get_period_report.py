@@ -35,4 +35,11 @@ class GetPeriodReportUseCase:
         start = _period_start(period)
         donations_total = await self._donations.sum_since(start)
         expenses_total = await self._expenses.sum_since(start)
-        return PoolSnapshot(donations_total=donations_total, expenses_total=expenses_total)
+        donations_count = await self._donations.count_since(start)
+        expenses_count = await self._expenses.count_since(start)
+        return PoolSnapshot(
+            donations_total=donations_total,
+            expenses_total=expenses_total,
+            donations_count=donations_count,
+            expenses_count=expenses_count,
+        )

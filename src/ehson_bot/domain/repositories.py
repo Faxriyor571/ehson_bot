@@ -31,6 +31,10 @@ class DonationRepository(Protocol):
         """Sum of amounts with ``created_at >= start``, or all-time if ``start`` is None."""
         ...
 
+    async def count_since(self, start: datetime | None) -> int:
+        """Count of entries with ``created_at >= start``, or all-time if ``start`` is None."""
+        ...
+
 
 class ExpenseRepository(Protocol):
     """Persistence port for the usage/expense ledger."""
@@ -57,6 +61,10 @@ class ExpenseRepository(Protocol):
 
     async def sum_since(self, start: datetime | None) -> Decimal:
         """Sum of amounts with ``created_at >= start``, or all-time if ``start`` is None."""
+        ...
+
+    async def count_since(self, start: datetime | None) -> int:
+        """Count of entries with ``created_at >= start``, or all-time if ``start`` is None."""
         ...
 
 
@@ -92,4 +100,4 @@ class BankAccountRepository(Protocol):
         """Returns None if no Super Admin has configured it yet."""
         ...
 
-    async def set(self, text: str) -> BankAccountInfo: ...
+    async def set(self, card_number: str, card_holder: str, bank_name: str) -> BankAccountInfo: ...

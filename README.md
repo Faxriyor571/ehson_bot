@@ -14,7 +14,7 @@ balance. A scheduled job posts a report to every registered user at 23:59
 |---|---|
 | **User** (default) | View statistics, balance, and the donation account. Cannot edit anything. |
 | **Treasurer** | Everything a User can, plus record donations/expenses and correct mistaken entries. |
-| **Super Admin** | Everything a Treasurer can, plus grant/revoke the Treasurer role and edit the donation account text. |
+| **Super Admin** | Everything a Treasurer can, plus grant/revoke the Treasurer role, approve pending users, and configure the donation account (card number, card holder, bank name — set via a guided 3-step flow, not free text). |
 
 Every real Telegram user becomes a `User` the first time they press
 `/start` — there is no "unauthorized" wall; viewing reports is intentionally

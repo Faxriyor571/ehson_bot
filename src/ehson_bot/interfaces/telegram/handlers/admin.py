@@ -37,8 +37,8 @@ from ehson_bot.interfaces.telegram.keyboards import (
 )
 from ehson_bot.interfaces.telegram.states import (
     ApproveUserStates,
+    BankAccountStates,
     ManageTreasurerStates,
-    SettingsStates,
 )
 
 router = Router(name="admin")
@@ -158,28 +158,40 @@ async def confirm_remove_treasurer(
 
 
 # --------------------------------------------------------------------------
-# Settings: view/edit the donation bank account text
+# Settings: view/edit the donation bank account (card number, holder, bank —
+# a guided 3-step flow, each field stored separately, not one free-text blob)
 # --------------------------------------------------------------------------
+
+
+def _account_summary(card_number: str, card_holder: str, bank_name: str) -> str:
+    return (
+        f"💳 Karta raqami: {card_number}\n"
+        f"👤 Karta egasi: {card_holder}\n"
+        f"🏦 Bank: {bank_name}"
+    )
 
 
 @router.message(F.text == BTN_SETTINGS)
 async def open_settings(message: Message, session: AsyncSession) -> None:
     account = await SqlAlchemyBankAccountRepository(session).get()
-    current = f"Joriy matn:\n{account.text}" if account else "Hisob raqami hali sozlanmagan."
+    current = (
+        _account_summary(account.card_number, account.card_holder, account.bank_name)
+        if account
+        else "Hisob raqami hali sozlanmagan."
+    )
     await message.answer(f"<b>Sozlamalar</b>\n\n{current}", reply_markup=settings_menu())
 
 
 @router.message(F.text == BTN_EDIT_BANK_ACCOUNT)
-async def ask_bank_account_text(message: Message, state: FSMContext) -> None:
-    await state.set_state(SettingsStates.awaiting_bank_account_text)
-    await message.answer(
-        "Hisob raqami uchun matnni yuboring (bank nomi, karta/hisob raqami, qabul qiluvchi).",
-        reply_markup=cancel_only(),
-    )
+async def ask_card_number(message: Message, state: FSMContext) -> None:
+    await state.set_state(BankAccountStates.awaiting_card_number)
+    await message.answer("1/3. Karta raqamini yuboring.", reply_markup=cancel_only())
 
 
-@router.message(SettingsStates.awaiting_bank_account_text, F.text == BTN_CANCEL)
-@router.message(SettingsStates.confirming, F.text == BTN_CANCEL)
+@router.message(BankAccountStates.awaiting_card_number, F.text == BTN_CANCEL)
+@router.message(BankAccountStates.awaiting_card_holder, F.text == BTN_CANCEL)
+@router.message(BankAccountStates.awaiting_bank_name, F.text == BTN_CANCEL)
+@router.message(BankAccountStates.confirming, F.text == BTN_CANCEL)
 async def cancel_bank_account_edit(
     message: Message, state: FSMContext, session: AsyncSession
 ) -> None:
@@ -188,26 +200,54 @@ async def cancel_bank_account_edit(
     await show_main_menu(message, session)
 
 
-@router.message(SettingsStates.awaiting_bank_account_text)
-async def ask_confirm_bank_account_text(message: Message, state: FSMContext) -> None:
-    text = (message.text or "").strip()
-    if not text:
-        await message.answer("Matn bo'sh bo'lishi mumkin emas. Iltimos, qayta yuboring.")
+@router.message(BankAccountStates.awaiting_card_number)
+async def ask_card_holder(message: Message, state: FSMContext) -> None:
+    card_number = (message.text or "").strip()
+    if not card_number:
+        await message.answer("Karta raqami bo'sh bo'lishi mumkin emas. Iltimos, qayta yuboring.")
         return
 
-    await state.update_data(text=text)
-    await state.set_state(SettingsStates.confirming)
+    await state.update_data(card_number=card_number)
+    await state.set_state(BankAccountStates.awaiting_card_holder)
+    await message.answer("2/3. Karta egasining F.I.Sh.ni yuboring.", reply_markup=cancel_only())
+
+
+@router.message(BankAccountStates.awaiting_card_holder)
+async def ask_bank_name(message: Message, state: FSMContext) -> None:
+    card_holder = (message.text or "").strip()
+    if not card_holder:
+        await message.answer("Karta egasi bo'sh bo'lishi mumkin emas. Iltimos, qayta yuboring.")
+        return
+
+    await state.update_data(card_holder=card_holder)
+    await state.set_state(BankAccountStates.awaiting_bank_name)
+    await message.answer("3/3. Bank nomini yuboring.", reply_markup=cancel_only())
+
+
+@router.message(BankAccountStates.awaiting_bank_name)
+async def ask_confirm_bank_account(message: Message, state: FSMContext) -> None:
+    bank_name = (message.text or "").strip()
+    if not bank_name:
+        await message.answer("Bank nomi bo'sh bo'lishi mumkin emas. Iltimos, qayta yuboring.")
+        return
+
+    await state.update_data(bank_name=bank_name)
+    await state.set_state(BankAccountStates.confirming)
+    data = await state.get_data()
+    summary = _account_summary(data["card_number"], data["card_holder"], bank_name)
     await message.answer(
-        f"Tasdiqlaysizmi? Yangi matn:\n\n{text}", reply_markup=confirm_cancel()
+        f"Tasdiqlaysizmi?\n\n{summary}", reply_markup=confirm_cancel()
     )
 
 
-@router.message(SettingsStates.confirming, F.text == BTN_CONFIRM)
-async def confirm_bank_account_text(
-    message: Message, state: FSMContext, session: AsyncSession
-) -> None:
+@router.message(BankAccountStates.confirming, F.text == BTN_CONFIRM)
+async def confirm_bank_account(message: Message, state: FSMContext, session: AsyncSession) -> None:
     data = await state.get_data()
-    await SqlAlchemyBankAccountRepository(session).set(data["text"])
+    await SqlAlchemyBankAccountRepository(session).set(
+        card_number=data["card_number"],
+        card_holder=data["card_holder"],
+        bank_name=data["bank_name"],
+    )
     await state.clear()
     await message.answer("✅ Hisob raqami yangilandi.")
     await show_main_menu(message, session)

@@ -38,6 +38,25 @@ async def test_sum_since_on_empty_ledger_is_zero(session: AsyncSession) -> None:
     assert await repo.sum_since(None) == 0
 
 
+async def test_count_since_counts_entries(session: AsyncSession) -> None:
+    repo = SqlAlchemyDonationRepository(session)
+    await repo.add(Donation(amount=Money(Decimal(1000)), recorded_by=TreasurerId(1)))
+    await repo.add(Donation(amount=Money(Decimal(2000)), recorded_by=TreasurerId(1)))
+
+    assert await repo.count_since(None) == 2
+
+
+async def test_count_since_start_excludes_older_rows(session: AsyncSession) -> None:
+    old = DonationRow(amount=Decimal(1000), recorded_by_id=1, created_at=datetime(2020, 1, 1))
+    recent = DonationRow(amount=Decimal(2000), recorded_by_id=1, created_at=datetime(2026, 1, 1))
+    session.add_all([old, recent])
+    await session.commit()
+
+    repo = SqlAlchemyDonationRepository(session)
+
+    assert await repo.count_since(datetime(2025, 1, 1)) == 1
+
+
 async def test_remove_deletes_existing_and_reports_missing(session: AsyncSession) -> None:
     repo = SqlAlchemyDonationRepository(session)
     donation = await repo.add(Donation(amount=Money(Decimal(500)), recorded_by=TreasurerId(1)))

@@ -74,7 +74,9 @@ class BankAccountSettingsRow(Base):
 
     # autoincrement=False: always inserted as id=1 explicitly, never generated.
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=False)
-    text: Mapped[str] = mapped_column(String(1000), nullable=False)
+    card_number: Mapped[str] = mapped_column(String(64), nullable=False)
+    card_holder: Mapped[str] = mapped_column(String(255), nullable=False)
+    bank_name: Mapped[str] = mapped_column(String(255), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )

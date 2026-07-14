@@ -89,6 +89,12 @@ class SqlAlchemyDonationRepository:
             stmt = stmt.where(DonationRow.created_at >= start)
         return (await self._session.execute(stmt)).scalar_one()
 
+    async def count_since(self, start: datetime | None) -> int:
+        stmt = select(func.count(DonationRow.id))
+        if start is not None:
+            stmt = stmt.where(DonationRow.created_at >= start)
+        return (await self._session.execute(stmt)).scalar_one()
+
 
 class SqlAlchemyExpenseRepository:
     """Satisfies ``ExpenseRepository`` structurally (via ``Protocol``)."""
@@ -136,6 +142,12 @@ class SqlAlchemyExpenseRepository:
 
     async def sum_since(self, start: datetime | None) -> Decimal:
         stmt = select(func.coalesce(func.sum(ExpenseRow.amount), 0))
+        if start is not None:
+            stmt = stmt.where(ExpenseRow.created_at >= start)
+        return (await self._session.execute(stmt)).scalar_one()
+
+    async def count_since(self, start: datetime | None) -> int:
+        stmt = select(func.count(ExpenseRow.id))
         if start is not None:
             stmt = stmt.where(ExpenseRow.created_at >= start)
         return (await self._session.execute(stmt)).scalar_one()
@@ -202,15 +214,32 @@ class SqlAlchemyBankAccountRepository:
         row = await self._session.get(BankAccountSettingsRow, _BANK_ACCOUNT_ROW_ID)
         if row is None:
             return None
-        return BankAccountInfo(text=row.text, updated_at=row.updated_at)
+        return BankAccountInfo(
+            card_number=row.card_number,
+            card_holder=row.card_holder,
+            bank_name=row.bank_name,
+            updated_at=row.updated_at,
+        )
 
-    async def set(self, text: str) -> BankAccountInfo:
+    async def set(self, card_number: str, card_holder: str, bank_name: str) -> BankAccountInfo:
         row = await self._session.get(BankAccountSettingsRow, _BANK_ACCOUNT_ROW_ID)
         if row is None:
-            row = BankAccountSettingsRow(id=_BANK_ACCOUNT_ROW_ID, text=text)
+            row = BankAccountSettingsRow(
+                id=_BANK_ACCOUNT_ROW_ID,
+                card_number=card_number,
+                card_holder=card_holder,
+                bank_name=bank_name,
+            )
             self._session.add(row)
         else:
-            row.text = text
+            row.card_number = card_number
+            row.card_holder = card_holder
+            row.bank_name = bank_name
         await self._session.commit()
         await self._session.refresh(row)
-        return BankAccountInfo(text=row.text, updated_at=row.updated_at)
+        return BankAccountInfo(
+            card_number=row.card_number,
+            card_holder=row.card_holder,
+            bank_name=row.bank_name,
+            updated_at=row.updated_at,
+        )

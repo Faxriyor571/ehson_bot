@@ -78,3 +78,36 @@ async def test_sum_since_on_empty_ledger_is_zero(session: AsyncSession) -> None:
     repo = SqlAlchemyExpenseRepository(session)
 
     assert await repo.sum_since(None) == 0
+
+
+async def test_count_since_counts_entries(session: AsyncSession) -> None:
+    repo = SqlAlchemyExpenseRepository(session)
+    await repo.add(
+        Expense(amount=Money(Decimal(1000)), description="A", recorded_by=TreasurerId(1))
+    )
+    await repo.add(
+        Expense(amount=Money(Decimal(2000)), description="B", recorded_by=TreasurerId(1))
+    )
+
+    assert await repo.count_since(None) == 2
+
+
+async def test_count_since_start_excludes_older_rows(session: AsyncSession) -> None:
+    old = ExpenseRow(
+        amount=Decimal(1000),
+        description="Old",
+        recorded_by_id=1,
+        created_at=datetime(2020, 1, 1),
+    )
+    recent = ExpenseRow(
+        amount=Decimal(2000),
+        description="Recent",
+        recorded_by_id=1,
+        created_at=datetime(2026, 1, 1),
+    )
+    session.add_all([old, recent])
+    await session.commit()
+
+    repo = SqlAlchemyExpenseRepository(session)
+
+    assert await repo.count_since(datetime(2025, 1, 1)) == 1

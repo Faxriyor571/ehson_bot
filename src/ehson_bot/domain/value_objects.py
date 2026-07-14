@@ -28,10 +28,19 @@ class Money:
 
 @dataclass(frozen=True, slots=True)
 class PoolSnapshot:
-    """Donations vs. usage over some period, and the resulting balance."""
+    """Donations vs. usage over some period, and counts of each.
+
+    ``balance`` is this *period's* net (donations − expenses for just this
+    window) — for anything other than the all-time period, that is NOT the
+    same thing as the pool's true running balance. Callers displaying a
+    period other than all-time must fetch the all-time snapshot separately
+    for "current balance" and never present this property as that.
+    """
 
     donations_total: Decimal
     expenses_total: Decimal
+    donations_count: int = 0
+    expenses_count: int = 0
 
     @property
     def balance(self) -> Decimal:

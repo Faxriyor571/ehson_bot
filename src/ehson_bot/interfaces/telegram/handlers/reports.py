@@ -6,6 +6,8 @@ see any of this, per the bot's private-by-default access model.
 """
 from __future__ import annotations
 
+from decimal import Decimal
+
 from aiogram import F, Router
 from aiogram.filters import StateFilter
 from aiogram.types import Message
@@ -48,12 +50,16 @@ _PERIOD_LABELS = {
 }
 
 
-def _format_snapshot(label: str, snapshot: PoolSnapshot) -> str:
+def _format_snapshot(label: str, snapshot: PoolSnapshot, current_balance: Decimal) -> str:
+    """``current_balance`` is always the true all-time balance — never the
+    period's own net — so this never repeats the bug where a period's net
+    change got shown to users labeled as "the balance".
+    """
     return (
         f"<b>{label} hisobot</b>\n\n"
-        f"Ehsonlar: {snapshot.donations_total:,.0f} so'm\n"
-        f"Xarajatlar: {snapshot.expenses_total:,.0f} so'm\n"
-        f"Balans: {snapshot.balance:,.0f} so'm"
+        f"Ehsonlar: {snapshot.donations_total:,.0f} so'm ({snapshot.donations_count} ta)\n"
+        f"Xarajatlar: {snapshot.expenses_total:,.0f} so'm ({snapshot.expenses_count} ta)\n\n"
+        f"💰 Joriy balans: {current_balance:,.0f} so'm"
     )
 
 
@@ -71,7 +77,11 @@ async def open_stats(message: Message) -> None:
 
 async def _reply_with_period(message: Message, session: AsyncSession, period: Period) -> None:
     snapshot = await _snapshot(session, period)
-    await message.answer(_format_snapshot(_PERIOD_LABELS[period], snapshot))
+    if period is Period.ALL:
+        current_balance = snapshot.balance
+    else:
+        current_balance = (await _snapshot(session, Period.ALL)).balance
+    await message.answer(_format_snapshot(_PERIOD_LABELS[period], snapshot, current_balance))
 
 
 @router.message(F.text == BTN_PERIOD_TODAY)
@@ -96,15 +106,35 @@ async def stats_all(message: Message, session: AsyncSession) -> None:
 
 @router.message(F.text == BTN_BALANCE)
 async def show_balance(message: Message, session: AsyncSession) -> None:
-    snapshot = await _snapshot(session, Period.ALL)
-    await message.answer(f"<b>Joriy balans:</b> {snapshot.balance:,.0f} so'm")
+    all_time = await _snapshot(session, Period.ALL)
+    today = await _snapshot(session, Period.TODAY)
+    await message.answer(
+        "<b>💰 Balans</b>\n\n"
+        f"Joriy balans: {all_time.balance:,.0f} so'm\n\n"
+        f"📆 Bugungi ehsonlar: {today.donations_total:,.0f} so'm\n"
+        f"📆 Bugungi xarajat: {today.expenses_total:,.0f} so'm\n"
+        f"📆 Bugungi qoldiq: {today.balance:,.0f} so'm"
+    )
 
 
 @router.message(F.text == BTN_ACCOUNT)
 async def show_account(message: Message, session: AsyncSession) -> None:
     account = await SqlAlchemyBankAccountRepository(session).get()
-    text = account.text if account else "Hisob raqami hali sozlanmagan."
-    await message.answer(f"<b>Hisob raqami:</b>\n{text}")
+    if account is None:
+        await message.answer(
+            "🤲 Hisob raqami hali sozlanmagan.\nIltimos, administrator bilan bog'laning."
+        )
+        return
+
+    await message.answer(
+        "<b>🤲 Ehson qilish</b>\n\n"
+        "Quyidagi hisob raqamiga ehson yuborishingiz mumkin:\n\n"
+        f"💳 Karta raqami: <code>{account.card_number}</code>\n"
+        f"👤 Karta egasi: {account.card_holder}\n"
+        f"🏦 Bank: {account.bank_name}\n\n"
+        "Ehsoningiz uchun tashakkur! 🤲\n"
+        "Har bir ehson qabul qilingach, xazinachi tomonidan qo'lda tasdiqlanadi."
+    )
 
 
 @router.message(F.text == BTN_USAGE_HISTORY)

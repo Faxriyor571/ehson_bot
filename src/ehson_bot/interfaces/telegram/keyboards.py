@@ -9,7 +9,7 @@ from ehson_bot.domain.entities import Role
 
 BTN_STATS = "📊 Statistika"
 BTN_BALANCE = "💰 Balans"
-BTN_ACCOUNT = "🏦 Hisob raqami"
+BTN_ACCOUNT = "🤲 Ehson qilish"
 BTN_HELP = "ℹ️ Yordam"
 
 BTN_ADD_DONATION = "➕ Ehson qo'shish"
