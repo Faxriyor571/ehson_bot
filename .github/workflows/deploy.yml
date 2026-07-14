@@ -1,0 +1,34 @@
+name: Deploy Mahfiy Ehson
+
+# Deploy only from main. No third-party Actions are used for the SSH step,
+# so there is no external supply-chain dependency to audit or pin — the
+# deploy key only ever exists in this ephemeral runner's filesystem and is
+# discarded when the job ends.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.EHSON_VPS_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "${{ secrets.EHSON_VPS_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Deploy to VPS
+        run: |
+          # The remote key is restricted (via a forced command in the VPS's
+          # authorized_keys) to run only /home/deploy/deploy.sh, regardless
+          # of what is requested here — it can touch nothing else on the
+          # server, and deploy.sh itself only ever operates inside the
+          # mahfiy-ehson project directory and Docker Compose project, never
+          # the separate Warehouse Management System.
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
+            "${{ secrets.EHSON_VPS_USER }}@${{ secrets.EHSON_VPS_HOST }}" \
+            "/home/deploy/deploy.sh"
