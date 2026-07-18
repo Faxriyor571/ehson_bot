@@ -1,11 +1,10 @@
 """Adapter: implements ``domain.repositories.DonationRepository`` with SQLAlchemy."""
 from __future__ import annotations
 
-from dataclasses import replace
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ehson_bot.domain.entities import (
@@ -13,8 +12,6 @@ from ehson_bot.domain.entities import (
     BotUser,
     Donation,
     Expense,
-    PendingPayment,
-    PendingPaymentStatus,
     Role,
     TreasurerId,
 )
@@ -24,7 +21,6 @@ from ehson_bot.infrastructure.db.models import (
     BotUserRow,
     DonationRow,
     ExpenseRow,
-    PendingPaymentRow,
 )
 
 _BANK_ACCOUNT_ROW_ID = 1
@@ -36,6 +32,7 @@ def _to_domain(row: DonationRow) -> Donation:
         amount=Money(row.amount),
         recorded_by=TreasurerId(row.recorded_by_id),
         note=row.note,
+        receipt_file_id=row.receipt_file_id,
         created_at=row.created_at,
     )
 
@@ -51,25 +48,12 @@ def _expense_to_domain(row: ExpenseRow) -> Expense:
     )
 
 
-def _pending_payment_to_domain(row: PendingPaymentRow) -> PendingPayment:
-    return PendingPayment(
-        id=row.id,
-        reference_code=row.reference_code,
-        amount=Money(row.amount),
-        donor_telegram_id=row.donor_telegram_id,
-        receipt_file_id=row.receipt_file_id,
-        status=PendingPaymentStatus(row.status),
-        donation_id=row.donation_id,
-        created_at=row.created_at,
-        decided_at=row.decided_at,
-    )
-
-
 def _user_to_domain(row: BotUserRow) -> BotUser:
     return BotUser(
         telegram_id=row.telegram_id,
         role=Role(row.role),
         display_name=row.display_name,
+        anonymous_name=row.anonymous_name,
         joined_at=row.joined_at,
     )
 
@@ -84,6 +68,7 @@ class SqlAlchemyDonationRepository:
         row = DonationRow(
             amount=donation.amount.amount,
             note=donation.note,
+            receipt_file_id=donation.receipt_file_id,
             recorded_by_id=donation.recorded_by.value,
         )
         self._session.add(row)
@@ -210,6 +195,15 @@ class SqlAlchemyBotUserRepository:
         await self._session.refresh(row)
         return _user_to_domain(row)
 
+    async def set_anonymous_name(self, telegram_id: int, anonymous_name: str) -> BotUser | None:
+        row = await self._session.get(BotUserRow, telegram_id)
+        if row is None:
+            return None
+        row.anonymous_name = anonymous_name
+        await self._session.commit()
+        await self._session.refresh(row)
+        return _user_to_domain(row)
+
     async def list_by_role(self, role: Role) -> list[BotUser]:
         stmt = (
             select(BotUserRow)
@@ -268,77 +262,3 @@ class SqlAlchemyBankAccountRepository:
             bank_name=row.bank_name,
             updated_at=row.updated_at,
         )
-
-
-class SqlAlchemyPendingPaymentRepository:
-    """Satisfies ``PendingPaymentRepository`` structurally (via ``Protocol``)."""
-
-    def __init__(self, session: AsyncSession) -> None:
-        self._session = session
-
-    async def add(self, payment: PendingPayment) -> PendingPayment:
-        row = PendingPaymentRow(
-            reference_code=payment.reference_code,
-            amount=payment.amount.amount,
-            donor_telegram_id=payment.donor_telegram_id,
-            receipt_file_id=payment.receipt_file_id,
-            status=payment.status,
-        )
-        self._session.add(row)
-        await self._session.commit()
-        await self._session.refresh(row)
-        return _pending_payment_to_domain(row)
-
-    async def get_by_reference(self, reference_code: str) -> PendingPayment | None:
-        stmt = select(PendingPaymentRow).where(
-            PendingPaymentRow.reference_code == reference_code
-        )
-        row = (await self._session.execute(stmt)).scalar_one_or_none()
-        return _pending_payment_to_domain(row) if row is not None else None
-
-    async def list_pending(self) -> list[PendingPayment]:
-        stmt = (
-            select(PendingPaymentRow)
-            .where(PendingPaymentRow.status == PendingPaymentStatus.PENDING)
-            .order_by(PendingPaymentRow.created_at)
-        )
-        result = await self._session.execute(stmt)
-        return [_pending_payment_to_domain(row) for row in result.scalars().all()]
-
-    async def try_claim(
-        self, reference_code: str, decision: PendingPaymentStatus
-    ) -> PendingPayment | None:
-        # The pre-scrub snapshot, for the caller to route a private message.
-        # Reading it here is not the race guard -- the conditional UPDATE
-        # below is -- so a stale read at this point is harmless: it's only
-        # ever used if that UPDATE actually reports a matched row.
-        existing = await self.get_by_reference(reference_code)
-        if existing is None:
-            return None
-
-        stmt = (
-            update(PendingPaymentRow)
-            .where(PendingPaymentRow.reference_code == reference_code)
-            .where(PendingPaymentRow.status == PendingPaymentStatus.PENDING)
-            .values(status=decision, donor_telegram_id=None, decided_at=func.now())
-        )
-        result = await self._session.execute(stmt)
-        await self._session.commit()
-
-        if result.rowcount == 0:
-            # Someone else already decided it between our read and our
-            # write -- lost the race, and this is a safe no-op.
-            return None
-        # Only the persisted row is scrubbed -- the returned object keeps
-        # the pre-scrub donor_telegram_id so the caller can still route a
-        # private message this one time.
-        return replace(existing, status=decision)
-
-    async def attach_donation(self, reference_code: str, donation_id: int) -> None:
-        stmt = (
-            update(PendingPaymentRow)
-            .where(PendingPaymentRow.reference_code == reference_code)
-            .values(donation_id=donation_id)
-        )
-        await self._session.execute(stmt)
-        await self._session.commit()

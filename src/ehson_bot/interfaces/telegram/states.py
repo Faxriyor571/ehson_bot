@@ -37,6 +37,6 @@ class PaymentStates(StatesGroup):
     confirming = State()
 
 
-class ReviewPendingPaymentStates(StatesGroup):
-    awaiting_reference_code = State()
-    confirming = State()
+class AnonymousNameStates(StatesGroup):
+    choosing = State()
+    awaiting_custom_name = State()

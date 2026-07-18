@@ -11,19 +11,20 @@ nothing else handled.
 from __future__ import annotations
 
 from aiogram import Router
+from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, ReplyKeyboardRemove
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ehson_bot.domain.entities import Role
 from ehson_bot.infrastructure.db.repositories import SqlAlchemyBotUserRepository
 from ehson_bot.interfaces.telegram.common import show_main_menu
-from ehson_bot.interfaces.telegram.handlers.start import lockout_text
+from ehson_bot.interfaces.telegram.handlers.start import lockout_text, start_anonymous_name_flow
 
 router = Router(name="fallback")
 
 
 @router.message()
-async def catch_all(message: Message, session: AsyncSession) -> None:
+async def catch_all(message: Message, session: AsyncSession, state: FSMContext) -> None:
     if message.from_user is None:
         return
     user = await SqlAlchemyBotUserRepository(session).upsert(
@@ -32,6 +33,9 @@ async def catch_all(message: Message, session: AsyncSession) -> None:
     )
     if user.role is Role.PENDING:
         await message.answer(lockout_text(user.telegram_id), reply_markup=ReplyKeyboardRemove())
+        return
+    if user.anonymous_name is None:
+        await start_anonymous_name_flow(message, state)
         return
     # An approved user typed something no specific handler matched — just
     # redraw the main menu rather than staying silent.

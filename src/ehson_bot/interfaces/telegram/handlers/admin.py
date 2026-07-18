@@ -1,5 +1,6 @@
-"""Super Admin: approve pending members, grant/revoke access, and manually
-review payment claims against the bank account.
+"""Super Admin: approve pending members, grant/revoke access, and manage
+the donation account. Donations themselves are entirely self-service (see
+``handlers/payments.py``) — there is no admin approval step for them.
 
 TREASURER is the only non-admin approved role (there is no separate
 donor-only tier) — this is a small, trusted group where every approved
@@ -14,32 +15,18 @@ Telegram's Bot API has no way to look a user up by @username unless that
 user has messaged the bot, so role changes are keyed on the numeric
 Telegram ID (same convention the old ``ADMIN_IDS`` env var used) — obtained
 by the target user via @userinfobot, then handed to the Super Admin.
-
-Payment review is keyed on ``reference_code`` instead, never a Telegram ID
-— there is no repository method that would let this screen look a claim up
-by donor, so it is structurally impossible to build a donor-lookup flow
-here even by accident.
 """
 from __future__ import annotations
 
-import logging
-
-from aiogram import Bot, F, Router
-from aiogram.exceptions import TelegramForbiddenError
+from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ehson_bot.application.use_cases.confirm_pending_payment import (
-    ConfirmPendingPaymentUseCase,
-)
-from ehson_bot.application.use_cases.reject_pending_payment import RejectPendingPaymentUseCase
-from ehson_bot.domain.entities import BotUser, PendingPaymentStatus, Role
+from ehson_bot.domain.entities import BotUser, Role
 from ehson_bot.infrastructure.db.repositories import (
     SqlAlchemyBankAccountRepository,
     SqlAlchemyBotUserRepository,
-    SqlAlchemyDonationRepository,
-    SqlAlchemyPendingPaymentRepository,
 )
 from ehson_bot.interfaces.telegram.common import esc, show_main_menu
 from ehson_bot.interfaces.telegram.filters import IsSuperAdmin
@@ -49,25 +36,14 @@ from ehson_bot.interfaces.telegram.keyboards import (
     BTN_CONFIRM,
     BTN_EDIT_BANK_ACCOUNT,
     BTN_MANAGE_MEMBERS,
-    BTN_PENDING_PAYMENTS,
-    BTN_REJECT_PAYMENT,
-    BTN_REVIEW_PAYMENT,
     BTN_REVOKE_ACCESS,
     BTN_SETTINGS,
     cancel_only,
     confirm_cancel,
-    confirm_reject_cancel,
     manage_members_menu,
-    pending_payments_menu,
     settings_menu,
 )
-from ehson_bot.interfaces.telegram.states import (
-    BankAccountStates,
-    ManageMembersStates,
-    ReviewPendingPaymentStates,
-)
-
-logger = logging.getLogger("ehson_bot.payments.review")
+from ehson_bot.interfaces.telegram.states import BankAccountStates, ManageMembersStates
 
 router = Router(name="admin")
 router.message.filter(IsSuperAdmin())
@@ -297,142 +273,3 @@ async def confirm_bank_account(message: Message, state: FSMContext, session: Asy
     await message.answer("✅ Hisob raqami yangilandi.")
     await show_main_menu(message, session)
 
-
-# --------------------------------------------------------------------------
-# Pending payments: manually verify a donor's claim against the bank
-# account. The screen never shows, and no repository method exposes, who
-# submitted a given reference code.
-# --------------------------------------------------------------------------
-
-
-def _donor_confirmed_text(amount: str) -> str:
-    return (
-        "✅ Ehsoningiz tasdiqlandi!\n\n"
-        f"💰 {amount}\n\n"
-        "Alloh ehsoningizni qabul qilsin va ajringizni ziyoda qilsin. 🤲"
-    )
-
-
-def _donor_rejected_text() -> str:
-    return (
-        "Ehsoningiz hozircha tasdiqlanmadi — administrator hisobda mos "
-        "to'lovni topa olmadi.\n\nAgar bu xato bo'lsa, administrator bilan bog'laning."
-    )
-
-
-@router.message(F.text == BTN_PENDING_PAYMENTS)
-async def open_pending_payments(message: Message, session: AsyncSession) -> None:
-    pending = await SqlAlchemyPendingPaymentRepository(session).list_pending()
-    if pending:
-        listing = "\n".join(
-            f"• <code>{p.reference_code}</code> — {p.amount} so'm — {p.created_at:%Y-%m-%d %H:%M}"
-            for p in pending
-        )
-    else:
-        listing = "— yo'q"
-    await message.answer(
-        f"<b>Kutilayotgan ehsonlar</b>\n\n{listing}",
-        reply_markup=pending_payments_menu(),
-    )
-
-
-@router.message(F.text == BTN_REVIEW_PAYMENT)
-async def ask_reference_code(message: Message, state: FSMContext) -> None:
-    await state.set_state(ReviewPendingPaymentStates.awaiting_reference_code)
-    await message.answer(
-        "Ko'rib chiqiladigan murojaat kodini yuboring (masalan: EH-8F42K).",
-        reply_markup=cancel_only(),
-    )
-
-
-@router.message(ReviewPendingPaymentStates.awaiting_reference_code, F.text == BTN_CANCEL)
-@router.message(ReviewPendingPaymentStates.confirming, F.text == BTN_CANCEL)
-async def cancel_payment_review(message: Message, state: FSMContext, session: AsyncSession) -> None:
-    await state.clear()
-    await message.answer("Bekor qilindi.")
-    await show_main_menu(message, session)
-
-
-@router.message(ReviewPendingPaymentStates.awaiting_reference_code)
-async def ask_confirm_or_reject_payment(
-    message: Message, state: FSMContext, session: AsyncSession
-) -> None:
-    code = (message.text or "").strip().upper()
-    payment = await SqlAlchemyPendingPaymentRepository(session).get_by_reference(code)
-    if payment is None or payment.status != PendingPaymentStatus.PENDING:
-        await message.answer(f"{code} kutilayotganlar ro'yxatida topilmadi.")
-        return
-
-    await state.update_data(reference_code=code)
-    await state.set_state(ReviewPendingPaymentStates.confirming)
-    await message.answer(
-        f"🆔 {code}\n💰 {payment.amount} so'm\n\n"
-        "Hisobda mos to'lovni topdingizmi?",
-        reply_markup=confirm_reject_cancel(),
-    )
-
-
-@router.message(ReviewPendingPaymentStates.confirming, F.text == BTN_CONFIRM)
-async def confirm_pending_payment(
-    message: Message, state: FSMContext, session: AsyncSession, bot: Bot
-) -> None:
-    if message.from_user is None:
-        return
-    data = await state.get_data()
-    code = data["reference_code"]
-
-    use_case = ConfirmPendingPaymentUseCase(
-        SqlAlchemyPendingPaymentRepository(session), SqlAlchemyDonationRepository(session)
-    )
-    result = await use_case.execute(code, confirmed_by_telegram_id=message.from_user.id)
-    await state.clear()
-    if result is None:
-        await message.answer(f"{code} allaqachon ko'rib chiqilgan.")
-        await show_main_menu(message, session)
-        return
-
-    logger.info(
-        "Pending payment confirmed: reference=%s donation_id=%s confirmed_by=%s",
-        code,
-        result.donation.id,
-        message.from_user.id,
-    )
-
-    amount_text = f"{result.donation.amount} so'm"
-
-    if result.donor_telegram_id is not None:
-        try:
-            await bot.send_message(result.donor_telegram_id, _donor_confirmed_text(amount_text))
-        except TelegramForbiddenError:
-            logger.info("Could not notify donor for %s: bot was blocked", code)
-
-    await message.answer(f"✅ {code} tasdiqlandi. Ehson qayd etildi.")
-    await show_main_menu(message, session)
-
-
-@router.message(ReviewPendingPaymentStates.confirming, F.text == BTN_REJECT_PAYMENT)
-async def reject_pending_payment(
-    message: Message, state: FSMContext, session: AsyncSession, bot: Bot
-) -> None:
-    data = await state.get_data()
-    code = data["reference_code"]
-
-    result = await RejectPendingPaymentUseCase(
-        SqlAlchemyPendingPaymentRepository(session)
-    ).execute(code)
-    await state.clear()
-    if result is None:
-        await message.answer(f"{code} allaqachon ko'rib chiqilgan.")
-        await show_main_menu(message, session)
-        return
-
-    logger.info("Pending payment rejected: reference=%s", code)
-
-    if result.donor_telegram_id is not None:
-        try:
-            await bot.send_message(result.donor_telegram_id, _donor_rejected_text())
-        except TelegramForbiddenError:
-            logger.info("Could not notify donor for %s: bot was blocked", code)
-
-    await message.answer(f"🚫 {code} rad etildi.")
-    await show_main_menu(message, session)

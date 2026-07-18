@@ -6,6 +6,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from ehson_bot.application.use_cases.record_donation import (
+    SYSTEM_TREASURER_ID,
     RecordDonationInput,
     RecordDonationUseCase,
 )
@@ -51,3 +52,30 @@ async def test_record_donation_persists_amount_and_note() -> None:
     assert donation.note == "fitr"
     assert donation.recorded_by.value == 42
     assert repo.saved == [donation]
+
+
+async def test_record_donation_persists_optional_receipt() -> None:
+    repo = FakeDonationRepository()
+    use_case = RecordDonationUseCase(repo)
+
+    donation = await use_case.execute(
+        RecordDonationInput(amount=Decimal(50000), recorded_by_id=42, receipt_file_id="file123")
+    )
+
+    assert donation.receipt_file_id == "file123"
+
+
+async def test_record_donation_supports_the_system_sentinel() -> None:
+    """Self-service donations (the donor's own confirm press) have no human
+    treasurer to credit -- SYSTEM_TREASURER_ID is a fixed, documented
+    sentinel, never a real Telegram id, since ``Donation`` must never carry
+    the donor's own identity.
+    """
+    repo = FakeDonationRepository()
+    use_case = RecordDonationUseCase(repo)
+
+    donation = await use_case.execute(
+        RecordDonationInput(amount=Decimal(10000), recorded_by_id=SYSTEM_TREASURER_ID)
+    )
+
+    assert donation.recorded_by.value == SYSTEM_TREASURER_ID

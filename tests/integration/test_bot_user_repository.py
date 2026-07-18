@@ -16,6 +16,27 @@ async def test_upsert_creates_new_user_as_pending_by_default(session: AsyncSessi
     assert user.telegram_id == 111
     assert user.role is Role.PENDING
     assert user.display_name == "Ali"
+    assert user.anonymous_name is None
+
+
+async def test_set_anonymous_name_persists_and_returns_it(session: AsyncSession) -> None:
+    repo = SqlAlchemyBotUserRepository(session)
+    await repo.upsert(telegram_id=111, display_name="Ali")
+
+    updated = await repo.set_anonymous_name(111, "QalbNuri")
+
+    assert updated is not None
+    assert updated.anonymous_name == "QalbNuri"
+
+    fetched = await repo.get(111)
+    assert fetched is not None
+    assert fetched.anonymous_name == "QalbNuri"
+
+
+async def test_set_anonymous_name_returns_none_for_unknown_user(session: AsyncSession) -> None:
+    repo = SqlAlchemyBotUserRepository(session)
+
+    assert await repo.set_anonymous_name(999, "QalbNuri") is None
 
 
 async def test_upsert_refreshes_display_name_without_changing_role(

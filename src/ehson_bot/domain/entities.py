@@ -15,10 +15,9 @@ class Role(str, Enum):
     PENDING is the default for anyone who has never been approved by a
     Super Admin — they have no access at all until approved. There is no
     separate "regular member" tier: approving someone grants TREASURER
-    directly, since donation-taking no longer depends on role (a Super
-    Admin manually verifying the bank account is what protects it) and
-    every approved member of this small, trusted group is also trusted to
-    record expenses.
+    directly, since every approved member of this small, trusted group
+    (only a handful of people) is trusted both to donate on their own
+    say-so and to record expenses.
     """
 
     PENDING = "pending"
@@ -30,11 +29,17 @@ class Role(str, Enum):
 class BotUser:
     """Anyone who has ever pressed /start. Identity here is fine — this is
     about *who operates the bot*, never about who donated.
+
+    ``anonymous_name`` is a self-chosen (or randomly assigned) nickname used
+    only to personalize messages sent directly back to this person and in
+    the anonymous donation announcement — never their real Telegram name or
+    username, and never shown alongside any identifying information.
     """
 
     telegram_id: int
     role: Role
     display_name: str | None = None
+    anonymous_name: str | None = None
     joined_at: datetime | None = None
 
 
@@ -56,12 +61,16 @@ class Donation:
 
     Deliberately has no donor-identifying field: anonymity is a structural
     property of this entity, not something enforced by hiding a field later.
+    ``receipt_file_id`` is an optional transfer screenshot the donor
+    attached — visible only to Super Admins, never in a group/channel or on
+    any statistics screen.
     """
 
     amount: Money
     recorded_by: TreasurerId
     id: int | None = None
     note: str | None = None
+    receipt_file_id: str | None = None
     created_at: datetime | None = None
 
 
@@ -99,41 +108,3 @@ class BankAccountInfo:
     card_holder: str
     bank_name: str
     updated_at: datetime | None = None
-
-
-class PendingPaymentStatus(str, Enum):
-    """Lifecycle of one donor-submitted payment claim, tracked independently
-    of whether it ever becomes a ``Donation``."""
-
-    PENDING = "pending"
-    CONFIRMED = "confirmed"
-    REJECTED = "rejected"
-
-
-@dataclass(slots=True)
-class PendingPayment:
-    """A donor's claim of having paid, awaiting a Super Admin to manually
-    verify it against the bank account — the operational record of that
-    claim, not the donation itself.
-
-    There is no real payment gateway integrated, so a human has to look at
-    the bank account and decide "did this money actually arrive" — but that
-    human must never learn *who* sent it. ``reference_code`` is the only
-    donor-facing identifier the Super Admin ever sees (in notifications, in
-    the pending-payments queue, everywhere); ``donor_telegram_id`` exists
-    only to route the private confirm/reject message and is scrubbed the
-    instant a decision is made. This row is the audit trail of "a payment
-    was claimed and what became of it", not a permanent donor-to-donation
-    link — the resulting ``Donation`` never carries it, and the Super Admin
-    interface never surfaces the reference-code-to-donor mapping at all.
-    """
-
-    reference_code: str
-    amount: Money
-    id: int | None = None
-    donor_telegram_id: int | None = None
-    receipt_file_id: str | None = None
-    status: PendingPaymentStatus = PendingPaymentStatus.PENDING
-    donation_id: int | None = None
-    created_at: datetime | None = None
-    decided_at: datetime | None = None

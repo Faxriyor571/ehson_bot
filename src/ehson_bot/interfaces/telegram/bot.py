@@ -15,6 +15,7 @@ from ehson_bot.infrastructure.db.session import get_session
 from ehson_bot.infrastructure.scheduler import build_scheduler
 from ehson_bot.interfaces.telegram.handlers import (
     admin,
+    anonymous_name,
     donations,
     fallback,
     payments,
@@ -33,6 +34,7 @@ def build_dispatcher() -> Dispatcher:
     # middleware ever runs — only outer middleware wraps that early enough.
     dp.message.outer_middleware(DbSessionMiddleware())
     dp.include_router(start.router)
+    dp.include_router(anonymous_name.router)
     dp.include_router(reports.router)
     dp.include_router(admin.router)
     dp.include_router(donations.router)

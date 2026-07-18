@@ -1,13 +1,12 @@
-"""Super-Admin-only financial management: record expenses, correct a
-mistaken donation/expense entry by deleting it.
+"""Super-Admin-only financial management: record expenses, view recent
+donation/expense entries, correct a mistaken one by deleting it.
 
 Donations are no longer recorded here — a member submits a claim through
 ``handlers/payments.py`` and a Super Admin manually verifies and confirms
-it via ``handlers/admin.py``'s pending-payments review screen. Approved
-members (TREASURER) can only *view* recent entries
-(``handlers/reports.py``); recording, editing, and deleting is
-administrative and restricted to Super Admin, per the bot's permission
-model.
+it via ``handlers/admin.py``'s pending-payments review screen. Everything
+in this module — recording, viewing itemized entries, editing, deleting —
+is administrative and restricted to Super Admin; the persistent menu for
+an ordinary approved member stays minimal (donate/balance/statistics only).
 
 All multi-step input uses ReplyKeyboardMarkup + FSM (no slash commands) so
 every step offers Cancel (and Skip where the field is optional), per the
@@ -22,6 +21,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ehson_bot.application.use_cases.list_recent_entries import ListRecentEntriesUseCase
 from ehson_bot.application.use_cases.record_expense import RecordExpenseInput, RecordExpenseUseCase
 from ehson_bot.application.use_cases.remove_donation import RemoveDonationUseCase
 from ehson_bot.application.use_cases.remove_expense import RemoveExpenseUseCase
@@ -37,9 +37,11 @@ from ehson_bot.interfaces.telegram.keyboards import (
     BTN_CANCEL,
     BTN_CONFIRM,
     BTN_DELETE_ENTRY,
+    BTN_RECENT,
     BTN_SKIP,
     cancel_only,
     confirm_cancel,
+    recent_entries_menu,
     skip_or_cancel,
 )
 from ehson_bot.interfaces.telegram.states import ExpenseEntryStates, RemoveEntryStates
@@ -163,9 +165,32 @@ async def expense_confirmed(message: Message, state: FSMContext, session: AsyncS
 
 
 # --------------------------------------------------------------------------
-# Correct (remove) a mistaken entry — the read-only list itself lives in
-# handlers/reports.py, visible to every approved member.
+# Recent entries: browse + correct (remove) a mistaken entry. Super-Admin
+# only — the persistent menu is kept minimal for ordinary approved members,
+# who no longer have a button for this at all.
 # --------------------------------------------------------------------------
+
+
+@router.message(F.text == BTN_RECENT)
+async def show_recent_entries(message: Message, session: AsyncSession) -> None:
+    use_case = ListRecentEntriesUseCase(
+        SqlAlchemyDonationRepository(session), SqlAlchemyExpenseRepository(session)
+    )
+    entries = await use_case.execute()
+
+    if not entries:
+        text = "Hozircha yozuvlar yo'q."
+    else:
+        lines = []
+        for entry in entries:
+            tag = "D" if entry.kind == "donation" else "X"
+            sign = "+" if entry.kind == "donation" else "-"
+            when = entry.created_at.strftime("%Y-%m-%d %H:%M")
+            label = f" ({esc(entry.label)})" if entry.label else ""
+            lines.append(f"{tag}{entry.id} — {sign}{entry.amount:,.0f} so'm — {when}{label}")
+        text = "<b>Oxirgi yozuvlar:</b>\n" + "\n".join(lines)
+
+    await message.answer(text, reply_markup=recent_entries_menu())
 
 
 @router.message(F.text == BTN_DELETE_ENTRY)
